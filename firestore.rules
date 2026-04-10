@@ -1,0 +1,207 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, displayName, photoURL, coins, createdAt, referralCode, referredBy, referralEarnings
+    //
+    // Collection: promotions
+    // Fields: userId, type, targetId, title, thumbnail, coinsPerAction, totalActions, completedActions, active, createdAt
+    //
+    // Collection: actions
+    // Fields: userId, promotionId, timestamp
+    //
+    // Collection: promo_codes
+    // Fields: code, coins, maxUses, usedCount, usedBy
+    //
+    // Collection: transactions
+    // Fields: userId, amount, type, description, timestamp
+    //
+    // Collection: config
+    // Fields: minVersion
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.uid == "Lb50nKsHxPZG8AhrdeyRU5MAOLf2" ||
+        request.auth.token.email == "tubefollowerhelp@gmail.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isRecent(time) {
+      return time > request.time - duration.value(5, 'm') && time < request.time + duration.value(5, 'm');
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'coins']) &&
+             data.uid is string && data.uid.size() < 128 &&
+             data.coins is number &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 256)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1024)) &&
+             (!('role' in data) || (data.role is string && data.role in ['admin', 'user'])) &&
+             (!('referralCode' in data) || (data.referralCode is string && data.referralCode.size() < 32)) &&
+             (!('referredBy' in data) || (data.referredBy is string && data.referredBy.size() < 128)) &&
+             (!('referralEarnings' in data) || (data.referralEarnings is number && data.referralEarnings >= 0)) &&
+             (!('createdAt' in data) || (data.createdAt is timestamp));
+    }
+
+    function isValidPromotion(data) {
+      return data.keys().hasAll(['userId', 'type', 'targetId', 'coinsPerAction', 'totalActions']) &&
+             data.type in ['subscribe', 'like', 'comment'] &&
+             data.targetId is string && data.targetId.size() < 128 &&
+             data.coinsPerAction is number && data.coinsPerAction > 0 &&
+             data.totalActions is number && data.totalActions > 0 &&
+             (!('title' in data) || (data.title is string && data.title.size() < 512)) &&
+             (!('thumbnail' in data) || (data.thumbnail is string && data.thumbnail.size() < 1024)) &&
+             (!('userName' in data) || (data.userName is string && data.userName.size() < 256)) &&
+             (!('userAvatar' in data) || (data.userAvatar is string && data.userAvatar.size() < 1024)) &&
+             (!('createdAt' in data) || (data.createdAt is timestamp)) &&
+             (!('completedActions' in data) || (data.completedActions is number)) &&
+             (!('active' in data) || (data.active is bool));
+    }
+
+    function isValidAction(data) {
+      return data.keys().hasAll(['userId', 'promotionId', 'timestamp']) &&
+             data.userId is string && data.userId.size() < 128 &&
+             data.promotionId is string && data.promotionId.size() < 128 &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['userId', 'amount', 'type', 'timestamp']) &&
+             data.userId is string && data.userId.size() < 128 &&
+             data.amount is number &&
+             data.type in ['earn', 'spend', 'bonus', 'referral', 'promo'] &&
+             (!('description' in data) || (data.description is string && data.description.size() < 512)) &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidTransfer(data) {
+      return data.keys().hasAll(['fromUserId', 'toUserId', 'amount', 'timestamp']) &&
+             data.fromUserId is string && data.fromUserId.size() < 128 &&
+             data.toUserId is string && data.toUserId.size() < 128 &&
+             data.amount is number && data.amount > 0 &&
+             data.timestamp is timestamp;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow get, list: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      request.resource.data.uid == userId &&
+                      request.resource.data.coins == 100 &&
+                      (!('role' in request.resource.data) || request.resource.data.role == 'user');
+      allow update: if isAuthenticated() && (
+        (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == resource.data.uid && 
+         (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)) || 
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['coins', 'referralEarnings', 'referredBy', 'youtubeToken', 'youtubeConnectedAt']) && 
+         request.resource.data.uid == resource.data.uid &&
+         (!('referredBy' in resource.data) || resource.data.referredBy == null)) ||
+        isAdmin()
+      );
+    }
+
+    match /promotions/{promotionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidPromotion(request.resource.data) && 
+                      (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (
+        (resource.data.userId == request.auth.uid && isValidPromotion(request.resource.data) && 
+         request.resource.data.userId == resource.data.userId) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['completedActions']) && 
+         request.resource.data.completedActions == resource.data.completedActions + 1 &&
+         request.resource.data.completedActions <= resource.data.totalActions &&
+         getAfter(/databases/$(database)/documents/actions/$(request.auth.uid + "_" + promotionId)) != null) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /actions/{actionId} {
+      allow read: if isAuthenticated() && (
+        actionId.matches("^" + request.auth.uid + "_.*") ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && 
+                      isValidAction(request.resource.data) &&
+                      actionId == request.auth.uid + "_" + request.resource.data.promotionId &&
+                      request.resource.data.userId == request.auth.uid &&
+                      exists(/databases/$(database)/documents/promotions/$(request.resource.data.promotionId));
+      allow update: if isAuthenticated() && (
+                      (resource.data.userId == request.auth.uid && 
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cheated', 'timestamp'])) ||
+                      isAdmin()
+                    );
+    }
+
+    match /promo_codes/{codeId} {
+      allow read: if isAuthenticated();
+      allow create, delete: if isAdmin();
+      allow update: if (
+                      isAuthenticated() && 
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedCount', 'usedBy']) &&
+                      request.resource.data.usedCount == resource.data.usedCount + 1 &&
+                      request.resource.data.usedBy.size() == resource.data.usedBy.size() + 1 &&
+                      request.resource.data.usedBy.hasAll(resource.data.usedBy) &&
+                      request.auth.uid in request.resource.data.usedBy &&
+                      !(request.auth.uid in resource.data.usedBy)
+                    ) || isAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidTransaction(request.resource.data) && 
+                      request.resource.data.userId == request.auth.uid;
+    }
+
+    match /daily_bonus/{bonusId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || bonusId == request.auth.uid || isAdmin());
+      allow create, update: if isAuthenticated() && 
+                              request.resource.data.userId == request.auth.uid &&
+                              request.resource.data.userId == bonusId &&
+                              request.resource.data.lastClaimed == request.time;
+    }
+
+    match /transfers/{transferId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidTransfer(request.resource.data) && 
+                      request.resource.data.fromUserId == request.auth.uid;
+    }
+
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

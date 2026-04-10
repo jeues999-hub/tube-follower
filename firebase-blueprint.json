@@ -1,0 +1,127 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user coin balance and basic info",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "coins": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "coins"]
+    },
+    "Promotion": {
+      "title": "Promotion Campaign",
+      "description": "A campaign to get subscribers, likes, or comments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "type": { "type": "string", "enum": ["subscribe", "like", "comment"] },
+        "targetId": { "type": "string", "description": "Video ID or Channel ID" },
+        "title": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "coinsPerAction": { "type": "number" },
+        "totalActions": { "type": "number" },
+        "completedActions": { "type": "number" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "targetId", "coinsPerAction", "totalActions"]
+    },
+    "DailyBonus": {
+      "title": "Daily Bonus Claim",
+      "description": "Record of a user's daily bonus claim",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "lastClaimed": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "lastClaimed"]
+    },
+    "Transfer": {
+      "title": "Coin Transfer",
+      "description": "A record of coins transferred between users",
+      "type": "object",
+      "properties": {
+        "fromUserId": { "type": "string" },
+        "toUserId": { "type": "string" },
+        "amount": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fromUserId", "toUserId", "amount"]
+    },
+    "Action": {
+      "title": "User Action",
+      "description": "Tracks which user completed which promotion",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "promotionId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "promotionId"]
+    },
+    "PromoCode": {
+      "title": "Promo Code",
+      "description": "Discount or bonus codes for coins",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "coins": { "type": "number" },
+        "maxUses": { "type": "number" },
+        "usedCount": { "type": "number" },
+        "usedBy": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["code", "coins", "maxUses"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Record of coin changes",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["earn", "spend", "bonus", "referral", "promo"] },
+        "description": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "amount", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile and coin balance"
+    },
+    "/promotions/{promotionId}": {
+      "schema": "Promotion",
+      "description": "Active promotion campaigns"
+    },
+    "/actions/{actionId}": {
+      "schema": "Action",
+      "description": "History of completed actions to prevent duplicates"
+    },
+    "/promo_codes/{codeId}": {
+      "schema": "PromoCode",
+      "description": "Available promo codes"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "History of user transactions"
+    },
+    "/transfers/{transferId}": {
+      "schema": "Transfer",
+      "description": "History of coin transfers between users"
+    },
+    "/daily_bonus/{bonusId}": {
+      "schema": "DailyBonus",
+      "description": "Record of user's daily bonus claims"
+    }
+  }
+}
