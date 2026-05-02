@@ -55,7 +55,9 @@ import {
   Download,
   Crown,
   Eye,
-  Smartphone
+  Smartphone,
+  Video,
+  Cloud
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import YouTube, { YouTubeProps } from "react-youtube";
@@ -73,6 +75,8 @@ interface UserProfile {
   referralEarnings?: number;
   youtubeToken?: string;
   youtubeConnectedAt?: any;
+  autoBoost?: boolean;
+  lastBoostedVideoId?: string;
   // Daily limits
   dailyCampaignSubs?: number;
   dailyEarnActions?: number;
@@ -424,44 +428,6 @@ function TermsOfService({ open, onOpenChange }: { open: boolean, onOpenChange: (
 }
 
 // --- Root Component for Routing ---
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  // We don't necessarily want to crash the app, but we want to log it
-  return errInfo;
-}
-
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const page = params.get('page');
@@ -1672,13 +1638,13 @@ function MainApp() {
           const verifyData = await verifyRes.json();
           
           if (verifyRes.ok) {
+            let hasChannel = true;
             if (!verifyData.items || verifyData.items.length === 0) {
-              toast.error("No YouTube Channel found! Please go to YouTube and click 'Create a Channel' first.", { duration: 8000 });
-              setIsConnecting(false);
-              return false;
+              toast.error("No YouTube Channel found! You are connected, but you MUST 'Create a Channel' on YouTube to start boosting or earning.", { duration: 10000 });
+              hasChannel = false;
             }
             
-            console.log("YouTube Verification Success:", verifyData);
+            console.log("YouTube Verification (Has Channel:", hasChannel, "):", verifyData);
             setGoogleAccessToken(token);
             sessionStorage.setItem(`google_access_token_${auth.currentUser.uid}`, token);
             sessionStorage.setItem('google_access_token', token);
@@ -1689,7 +1655,13 @@ function MainApp() {
               youtubeConnectedAt: serverTimestamp()
             }).catch(e => console.error("Failed to save token to firestore", e));
 
-            toast.success("YouTube Connected Successfully!");
+            if (hasChannel) {
+              const channel = verifyData.items[0];
+              toast.success(`Connected: ${channel.snippet.title}`);
+            } else {
+              toast.success("Account Connected!");
+            }
+
             setIsConnecting(false);
             return true;
           } else {
@@ -2520,6 +2492,8 @@ function MainApp() {
                   setActiveTab={setActiveTab}
                   autoBoost={autoBoost}
                   toggleAutoBoost={toggleAutoBoost}
+                  googleAccessToken={googleAccessToken}
+                  onConnectYouTube={handleConnectYouTube}
                 />
               </div>
             )}
@@ -3159,6 +3133,27 @@ function AdminTab() {
   const [isUpdatingQr, setIsUpdatingQr] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
+  const updateAppConfig = async () => {
+    if (!newQrUrl.trim()) {
+      toast.error("Please enter a valid URL");
+      return;
+    }
+    
+    setIsUpdatingQr(true);
+    try {
+      await setDoc(doc(db, "config", "app"), {
+        qrCodeUrl: newQrUrl.trim(),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      toast.success("App configuration updated!");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, "config/app");
+      toast.error("Failed to update settings");
+    } finally {
+      setIsUpdatingQr(false);
+    }
+  };
+
   useEffect(() => {
     // Real-time stats
     const usersUnsub = onSnapshot(collection(db, "users"), (snap) => {
@@ -3309,8 +3304,9 @@ function AdminTab() {
           <Button 
             className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl"
             onClick={updateAppConfig}
+            disabled={isUpdatingQr}
           >
-            UPDATE SETTINGS
+            {isUpdatingQr ? <Loader2 className="h-4 w-4 animate-spin" /> : "UPDATE SETTINGS"}
           </Button>
         </div>
       </div>
@@ -3556,7 +3552,9 @@ function HomeTab({
   deviceId,
   setActiveTab,
   autoBoost,
-  toggleAutoBoost
+  toggleAutoBoost,
+  googleAccessToken,
+  onConnectYouTube
 }: { 
   profile: UserProfile | null, 
   user: FirebaseUser | null, 
@@ -3577,16 +3575,27 @@ function HomeTab({
   deviceId: string | null,
   setActiveTab: (tab: "home" | "get-coin" | "get-subscribe" | "admin") => void,
   autoBoost: boolean,
-  toggleAutoBoost: () => void
+  toggleAutoBoost: () => void,
+  googleAccessToken: string | null,
+  onConnectYouTube: () => Promise<boolean>
 }) {
   const [isBuyOpen, setIsBuyOpen] = useState(false);
 
   const menuItems = [
+    { 
+      icon: Youtube, 
+      label: googleAccessToken ? "YouTube Connected" : "Connect YouTube Account", 
+      color: googleAccessToken ? "text-green-600" : "text-red-600", 
+      bg: googleAccessToken ? "bg-green-50" : "bg-red-50", 
+      onClick: googleAccessToken ? () => toast.success("YouTube is already connected!") : onConnectYouTube,
+      badge: googleAccessToken ? "ACTIVE" : undefined
+    },
     { icon: Users, label: "Switch Account", color: "text-blue-600", bg: "bg-blue-50", onClick: onOpenAccounts, badge: connectedAccounts.length > 1 ? connectedAccounts.length : undefined },
     { icon: Crown, label: "VIP Membership", color: "text-purple-600", bg: "bg-purple-50", onClick: onOpenVIP },
     { icon: CreditCard, label: "Add Coins (Recharge)", color: "text-yellow-600", bg: "bg-yellow-50", onClick: onOpenRecharge },
     { icon: History, label: "Transaction History", color: "text-indigo-600", bg: "bg-indigo-50", onClick: onOpenTransactions },
     { icon: Gift, label: "Free Coins", color: "text-green-600", bg: "bg-green-50", onClick: onOpenGiftCode },
+    { icon: Download, label: "Download Mobile App", color: "text-blue-600", bg: "bg-blue-50", onClick: () => toast.info("To install on mobile:\n1. Open in Chrome/Safari\n2. Click 'Add to Home Screen'\n3. Enjoy as a full app!") },
     { icon: ArrowRightLeft, label: "Transfer Coin", color: "text-purple-600", bg: "bg-purple-50", onClick: onOpenTransfer },
     { icon: UserPlus, label: "Invite Friends", color: "text-pink-600", bg: "bg-pink-50", onClick: onOpenInvite },
     { icon: HelpCircle, label: "Support (AI)", color: "text-orange-600", bg: "bg-orange-50", onClick: onOpenSupport },
@@ -3636,6 +3645,13 @@ function HomeTab({
             <div className="flex items-center gap-1.5 justify-center">
               <Zap className={`h-4 w-4 ${autoBoost ? "text-orange-500 animate-pulse" : "text-slate-300"}`} />
               <span className={`text-[10px] font-black uppercase ${autoBoost ? "text-orange-600" : "text-slate-400"}`}>{autoBoost ? "ON" : "OFF"}</span>
+            </div>
+          </div>
+          <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-100 flex-1 cursor-pointer group" onClick={() => toast.info("AI Bots are watching active campaigns...")}>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Iron Tab</p>
+            <div className="flex items-center gap-1.5 justify-center">
+              <Bot className="h-4 w-4 text-blue-500 group-hover:rotate-12 transition-transform" />
+              <span className="text-[10px] font-black uppercase text-blue-600">Active</span>
             </div>
           </div>
         </div>
@@ -3735,6 +3751,7 @@ function GetCoinTab({
     : promotions.filter(p => !completedTaskIds.has(p.id)).filter(p => p.type === filter)[0];
 
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isBotWorking, setIsBotWorking] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<{ok: boolean, msg: string} | null>(null);
 
   const verifyConnection = async () => {
@@ -4777,6 +4794,41 @@ function PublishingGuide({ open, onOpenChange }: { open: boolean, onOpenChange: 
               <br/>• <code className="bg-slate-100 px-1 rounded">GEMINI_API_KEY</code>
               <br/>Vercel will build and give you a live link!
             </p>
+          </section>
+
+          <section className="bg-green-50 p-4 rounded-2xl border border-green-200">
+            <h4 className="font-black text-green-700 uppercase text-[10px] mb-2 tracking-widest flex items-center gap-2">
+              <Smartphone className="h-4 w-4" />
+              PLAY STORE PUBLISHING STEPS
+            </h4>
+            <div className="space-y-3 text-[11px] text-green-900 leading-tight">
+              <p><b>1. Create Developer Account:</b> Pay $25 at Play Console.</p>
+              <p><b>2. Privacy Policy:</b> Mandatory. Host it at <code className="bg-white/50 px-1">/privacy.html</code>.</p>
+              <p><b>3. App Content:</b> Declare that your app uses YouTube APIs. Provide a video demo showing the Login process.</p>
+              <p><b>4. Build AAB:</b> Run <code className="bg-slate-100 px-1 border">npx cap build android</code> to get the file for upload.</p>
+            </div>
+          </section>
+
+          <section className="bg-slate-900 text-white p-5 rounded-2xl">
+            <h4 className="font-black uppercase text-xs mb-3 tracking-widest text-blue-400 flex items-center gap-2">
+              <Smartphone className="h-4 w-4" />
+              Convert to Mobile App (Best Way)
+            </h4>
+            <div className="space-y-4">
+              <div>
+                <p className="text-[10px] font-black text-blue-300 uppercase mb-1">Option A: PWA (Instant)</p>
+                <p className="text-[11px] leading-relaxed">The <code className="bg-white/10 px-1 rounded">manifest.json</code> is ready. Open your Vercel link in <b>Safari (iOS)</b> or <b>Chrome (Android)</b>. Tap <b>"Add to Home Screen"</b>. The app will launch without browser bars!</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-blue-300 uppercase mb-1">Option B: Native App (Capacitor)</p>
+                <p className="text-[11px] leading-relaxed">To get an APK/IPA, use Capacitor. Run:
+                  <br/><code className="bg-white/10 px-1 rounded">npx cap add android</code>
+                  <br/><code className="bg-white/10 px-1 rounded">npx cap copy</code>
+                  <br/><code className="bg-white/10 px-1 rounded">npx cap open android</code>
+                  <br/>This opens <b>Android Studio</b> where you can build your APK.
+                </p>
+              </div>
+            </div>
           </section>
         </div>
         <Button className="w-full mt-6 bg-[#2196F3] hover:bg-[#1976D2] text-white font-black h-14 rounded-2xl shadow-lg shadow-blue-500/20" onClick={() => onOpenChange(false)}>Got it!</Button>
