@@ -38,6 +38,7 @@ service cloud.firestore {
       return isAuthenticated() && (
         request.auth.uid == "Lb50nKsHxPZG8AhrdeyRU5MAOLf2" ||
         request.auth.token.email == "tubefollowerhelp@gmail.com" ||
+        request.auth.token.email == "durganirahul793@gmail.com" ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
@@ -114,12 +115,12 @@ service cloud.firestore {
     // Rules
     match /users/{userId} {
       allow get, list: if isAuthenticated();
-      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
                       request.resource.data.uid == userId &&
-                      request.resource.data.coins == 100 &&
+                      request.resource.data.coins == 0 &&
                       (!('role' in request.resource.data) || request.resource.data.role == 'user');
       allow update: if isAuthenticated() && (
-        (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == resource.data.uid && 
+        (request.auth.uid != null && isValidUser(request.resource.data) && request.resource.data.uid == resource.data.uid && 
          (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)) || 
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['coins', 'referralEarnings', 'referredBy', 'youtubeToken', 'youtubeConnectedAt']) && 
          request.resource.data.uid == resource.data.uid &&
@@ -137,22 +138,17 @@ service cloud.firestore {
          request.resource.data.userId == resource.data.userId) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['completedActions']) && 
          request.resource.data.completedActions == resource.data.completedActions + 1 &&
-         request.resource.data.completedActions <= resource.data.totalActions &&
-         getAfter(/databases/$(database)/documents/actions/$(request.auth.uid + "_" + promotionId)) != null) ||
+         request.resource.data.completedActions <= resource.data.totalActions) ||
         isAdmin()
       );
       allow delete: if isAdmin();
     }
 
     match /actions/{actionId} {
-      allow read: if isAuthenticated() && (
-        actionId.matches("^" + request.auth.uid + "_.*") ||
-        isAdmin()
-      );
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated() && 
                       isValidAction(request.resource.data) &&
-                      actionId == request.auth.uid + "_" + request.resource.data.promotionId &&
-                      request.resource.data.userId == request.auth.uid &&
+                      actionId.matches("^" + request.resource.data.userId + "_.*") &&
                       exists(/databases/$(database)/documents/promotions/$(request.resource.data.promotionId));
       allow update: if isAuthenticated() && (
                       (resource.data.userId == request.auth.uid && 
@@ -176,9 +172,8 @@ service cloud.firestore {
     }
 
     match /transactions/{transactionId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && isValidTransaction(request.resource.data) && 
-                      request.resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
     }
 
     match /daily_bonus/{bonusId} {
@@ -198,6 +193,12 @@ service cloud.firestore {
     match /config/{configId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /recharge_requests/{requestId} {
+      allow read: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.userId == request.auth.uid));
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAdmin();
     }
     
     match /test/connection {

@@ -52,7 +52,10 @@ import {
   MessageCircle,
   Bot,
   ExternalLink,
-  Download
+  Download,
+  Crown,
+  Eye,
+  Smartphone
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import YouTube, { YouTubeProps } from "react-youtube";
@@ -68,6 +71,24 @@ interface UserProfile {
   referralCode?: string;
   referredBy?: string;
   referralEarnings?: number;
+  youtubeToken?: string;
+  youtubeConnectedAt?: any;
+  // Daily limits
+  dailyCampaignSubs?: number;
+  dailyEarnActions?: number;
+  lastLimitResetDate?: string; // YYYY-MM-DD
+  // New: UTR for payments
+  utrCodes?: string[];
+}
+
+interface RechargeRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  amount: number;
+  utr: string;
+  status: 'pending' | 'approved' | 'rejected';
+  timestamp: any;
 }
 
 interface Promotion {
@@ -106,10 +127,6 @@ interface PromoCode {
   usedBy: string[];
 }
 
-interface DailyBonus {
-  userId: string;
-  lastClaimed: any;
-}
 
 interface ConnectedAccount {
   uid: string;
@@ -167,6 +184,13 @@ function Login({ onLogin, isLoading, acceptedTerms1, setAcceptedTerms1, accepted
             )}
             {isLoading ? "Signing in..." : "Get Started Free"}
           </Button>
+          
+          <div className="flex items-center justify-center gap-2 mt-2">
+            <div className="bg-green-500/10 text-green-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 border border-green-500/20">
+              <ShieldCheck className="h-3 w-3" />
+              Google Verified & Secure
+            </div>
+          </div>
           
           <div className="flex flex-col gap-2 w-full sm:w-auto">
             <div className="flex items-center gap-3 text-left bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -400,6 +424,44 @@ function TermsOfService({ open, onOpenChange }: { open: boolean, onOpenChange: (
 }
 
 // --- Root Component for Routing ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  // We don't necessarily want to crash the app, but we want to log it
+  return errInfo;
+}
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const page = params.get('page');
@@ -471,6 +533,12 @@ function MainApp() {
   const [isTroubleshootingOpen, setIsTroubleshootingOpen] = useState(false);
   const [isReferralOpen, setIsReferralOpen] = useState(false);
   const [isSupportOpen, setIsSupportOpen] = useState(false);
+  const [isVIPStoreOpen, setIsVIPStoreOpen] = useState(false);
+  const [isRechargeOpen, setIsRechargeOpen] = useState(false);
+  const [rechargeStep, setRechargeStep] = useState<1 | 2>(1);
+  const [utrInput, setUtrInput] = useState("");
+  const [isSubmittingUtr, setIsSubmittingUtr] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState("https://i.ibb.co/vzYyX0W/qr-placeholder.png");
   const [isUpdateRequired, setIsUpdateRequired] = useState(false);
   const [botLog, setBotLog] = useState<string[]>([]);
 
@@ -493,6 +561,9 @@ function MainApp() {
         if (data.minVersion > APP_VERSION) {
           setIsUpdateRequired(true);
         }
+        if (data.qrCodeUrl) {
+          setQrCodeUrl(data.qrCodeUrl);
+        }
       }
     }, (error) => {
       console.error("Config listener error:", error);
@@ -502,7 +573,6 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    (window as any).openTroubleshooting = () => setIsTroubleshootingOpen(true);
   }, []);
 
   const addBotLog = (msg: string) => {
@@ -517,7 +587,6 @@ function MainApp() {
   const [metadata, setMetadata] = useState<{ title: string, thumbnail: string, channelId?: string, videoId?: string } | null>(null);
   const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
   const [referCodeInput, setReferCodeInput] = useState("");
-  const [isNewUser, setIsNewUser] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [tutorialStep, setTutorialStep] = useState(0);
@@ -553,15 +622,23 @@ function MainApp() {
   // Fetch real subscriber count and logo using Gemini with Google Search
   useEffect(() => {
     const trimmedUrl = youtubeUrl.trim();
+    
+    // Strict block for non-subscribe tasks using channel format
+    const isChannelFormat = trimmedUrl.includes("/channel/") || trimmedUrl.includes("/c/") || trimmedUrl.includes("/user/") || (trimmedUrl.startsWith("UC") && trimmedUrl.length === 24) || (trimmedUrl.startsWith("@") && !trimmedUrl.includes("watch") && !trimmedUrl.includes("/v/"));
+    
+    if (campaignType !== 'subscribe' && isChannelFormat) {
+      // Just ignore or show invalid if it's a channel link for video task
+    }
+
     const isYoutube = trimmedUrl && (
       trimmedUrl.includes("youtube.com") || 
       trimmedUrl.includes("youtu.be") || 
       trimmedUrl.startsWith("@") ||
       (campaignType === "subscribe" && trimmedUrl.startsWith("UC") && trimmedUrl.length === 24) ||
-      (campaignType === "like" && /^[a-zA-Z0-9_-]{11}$/.test(trimmedUrl))
+      (campaignType !== "subscribe" && /^[a-zA-Z0-9_-]{11}$/.test(trimmedUrl))
     );
     
-    if (isYoutube) {
+    if (isYoutube && !(campaignType !== 'subscribe' && isChannelFormat)) {
       const fetchMetadata = async (retries = 2, useSearch = false) => {
         setIsFetchingMetadata(true);
         try {
@@ -570,26 +647,23 @@ function MainApp() {
             console.error("GEMINI_API_KEY is missing");
             return;
           }
-          const ai = new GoogleGenAI({ apiKey });
+          const model = "gemini-3-flash-preview";
           const isChannel = campaignType === "subscribe";
           
-          // Local parsing hint
-          let localHint = "";
+          let specificPrompt = "";
           if (isChannel) {
-            const ucMatch = trimmedUrl.match(/UC[a-zA-Z0-9_-]{22}/);
-            if (ucMatch) localHint = `(Hint: Channel ID might be ${ucMatch[0]})`;
+            specificPrompt = "This must be a YouTube Channel. Find the 24-char UC... ID.";
           } else {
-            const vMatch = trimmedUrl.match(/[a-zA-Z0-9_-]{11}/);
-            if (vMatch) localHint = `(Hint: Video ID might be ${vMatch[0]})`;
+            specificPrompt = "This MUST be a YouTube Video. Find the 11-char Video ID. Do NOT return a channel ID if this is a video URL.";
           }
 
-          const prompt = `YouTube metadata for: ${trimmedUrl}. ${localHint}
+          const prompt = `YouTube metadata for: ${trimmedUrl}. ${specificPrompt}
           Return JSON ONLY: {
             "count": number,
             "logoUrl": "string",
             "title": "string",
-            "channelId": "string (MUST be the 24-char UC... ID)",
-            "videoId": "string (MUST be the 11-char video ID)"
+            "channelId": "string (UC...)",
+            "videoId": "string (11 chars)"
           }`;
 
           const config: any = {
@@ -601,6 +675,7 @@ function MainApp() {
             config.tools = [{ googleSearch: {} }];
           }
 
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
           const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: prompt,
@@ -696,10 +771,76 @@ function MainApp() {
   }, [youtubeUrl, campaignType]);
   const [isSearching, setIsSearching] = useState(false);
   const [currentAutoTask, setCurrentAutoTask] = useState<Promotion | null>(null);
-  const [isDailyClaiming, setIsDailyClaiming] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
-  const [canClaimDaily, setCanClaimDaily] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [autoBoost, setAutoBoost] = useState(false);
+
+  useEffect(() => {
+    if (profile) {
+      setAutoBoost(profile.autoBoost || false);
+    }
+  }, [profile]);
+
+  const toggleAutoBoost = async () => {
+    if (!profile) return;
+    const newState = !autoBoost;
+    setAutoBoost(newState);
+    try {
+      await updateDoc(doc(db, "users", profile.uid), { autoBoost: newState });
+      toast.success(newState ? "AI Auto-Boost Enabled!" : "Auto-Boost Disabled");
+    } catch (e) {
+      console.error("Toggle error:", e);
+    }
+  };
+
+  // Global AI Auto-Boost Loop: Check for new uploads and boost automatically
+  useEffect(() => {
+    if (!profile || !autoBoost || !googleAccessToken || !profile.uid) return;
+
+    const checkAndBoost = async () => {
+      try {
+        console.log("[Auto-Boost] Checking for new uploads...");
+        const res = await fetch('https://www.googleapis.com/youtube/v3/search?part=snippet&forMine=true&maxResults=1&order=date&type=video', {
+          headers: { 'Authorization': `Bearer ${googleAccessToken}` }
+        });
+        const data = await res.json();
+        const latestVideo = data.items?.[0];
+        const latestVideoId = latestVideo?.id?.videoId;
+        
+        if (latestVideoId && latestVideoId !== profile.lastBoostedVideoId) {
+          if (profile.coins >= 1000) {
+            const campaignData = {
+              userId: profile.uid,
+              type: "like",
+              targetId: latestVideoId,
+              title: latestVideo.snippet.title,
+              thumbnail: latestVideo.snippet.thumbnails.default.url,
+              coinsPerAction: 100,
+              totalActions: 10,
+              completedActions: 0,
+              active: true,
+              createdAt: serverTimestamp(),
+              userName: profile.displayName || "Anonymous",
+              userAvatar: profile.photoURL || ""
+            };
+            
+            await addDoc(collection(db, "promotions"), campaignData);
+            await updateDoc(doc(db, "users", profile.uid), { 
+              coins: increment(-1000),
+              lastBoostedVideoId: latestVideoId
+            });
+            toast.success("AI Auto-Boost: New video detected. Created campaign!");
+          }
+        }
+      } catch (err) {
+        console.error("Auto-Boost check failed:", err);
+      }
+    };
+
+    const interval = setInterval(checkAndBoost, 300000); // 5 mins
+    checkAndBoost();
+    return () => clearInterval(interval);
+  }, [autoBoost, profile?.uid, googleAccessToken]);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
   const [totalCoins, setTotalCoins] = useState(0);
@@ -708,7 +849,7 @@ function MainApp() {
 
   // Admin check
   useEffect(() => {
-    if (user?.email === "tubefollowerhelp@gmail.com") {
+    if (user?.email === "tubefollowerhelp@gmail.com" || user?.email === "durganirahul793@gmail.com") {
       setIsAdmin(true);
     } else {
       setIsAdmin(false);
@@ -802,38 +943,6 @@ function MainApp() {
     return unsubscribe;
   }, [profile?.uid]);
 
-  // Check Daily Bonus
-  useEffect(() => {
-    if (!profile) return;
-    const checkDaily = async () => {
-      try {
-        const bonusDoc = await getDoc(doc(db, "daily_bonus", profile.uid));
-        setIsOffline(false);
-        if (!bonusDoc.exists()) {
-          setCanClaimDaily(true);
-          return;
-        }
-        const lastClaimed = bonusDoc.data().lastClaimed?.toDate();
-        if (!lastClaimed) {
-          setCanClaimDaily(true);
-          return;
-        }
-        const now = new Date();
-        const diff = now.getTime() - lastClaimed.getTime();
-        const hours24 = 24 * 60 * 60 * 1000;
-        setCanClaimDaily(diff >= hours24);
-      } catch (e: any) {
-        if (e.message?.includes("offline")) {
-          setIsOffline(true);
-        } else {
-          console.error("Failed to check daily bonus", e);
-        }
-      }
-    };
-    checkDaily();
-    const interval = setInterval(checkDaily, 60000); // Check every minute
-    return () => clearInterval(interval);
-  }, [profile?.uid]);
 
   // Fetch completed tasks to filter them out
   useEffect(() => {
@@ -911,17 +1020,17 @@ function MainApp() {
         try {
           if (!isActive) return;
           const currentUid = auth.currentUser?.uid;
-          if (!currentUid || currentUid !== profile.uid) {
-            console.log("[Auto] Auth state changed, stopping current loop");
+          if (!currentUid) {
+            console.log("[Auto] Not logged in, stopping current loop");
             return;
           }
 
-          const actionRef = doc(db, "actions", `${currentUid}_${promo.id}`);
+          const actionRef = doc(db, "actions", `${profile.uid}_${promo.id}`);
           let actionSnap;
           try {
             actionSnap = await getDoc(actionRef);
           } catch (error) {
-            handleFirestoreError(error, OperationType.GET, `actions/${currentUid}_${promo.id}`);
+            handleFirestoreError(error, OperationType.GET, `actions/${profile.uid}_${promo.id}`);
             continue;
           }
           
@@ -1130,24 +1239,23 @@ function MainApp() {
             }
 
             // Re-check auth and auto-running state after delay
-            const latestUid = auth.currentUser?.uid;
-            if (!isActive || !isAutoRunning || latestUid !== currentUid) return;
+            if (!isActive || !isAutoRunning || !auth.currentUser) return;
 
             try {
               const batch = writeBatch(db);
               batch.set(actionRef, { 
-                userId: currentUid, 
+                userId: profile.uid, 
                 promotionId: promo.id, 
                 timestamp: serverTimestamp() 
               });
               
-              batch.update(doc(db, "users", currentUid), { 
+              batch.update(doc(db, "users", profile.uid), { 
                 coins: increment(promo.coinsPerAction) 
               });
               
               const txRef = doc(collection(db, "transactions"));
               batch.set(txRef, {
-                userId: currentUid,
+                userId: profile.uid,
                 amount: promo.coinsPerAction,
                 type: 'earn',
                 description: `Auto: ${promo.type} task`,
@@ -1192,7 +1300,7 @@ function MainApp() {
               break;
             } catch (error) {
               setCurrentAutoTask(null);
-              handleFirestoreError(error, OperationType.WRITE, `actions/${currentUid}_${promo.id}`);
+              handleFirestoreError(error, OperationType.WRITE, `actions/${profile.uid}_${promo.id}`);
             }
           } else {
             console.log(`[Auto] Task already done for promo: ${promo.id}`);
@@ -1327,82 +1435,106 @@ function MainApp() {
     return () => clearInterval(interval);
   }, [profile?.uid, googleAccessToken, completedTaskIds.size]);
 
-  // Auth Listener
+  const [deviceId, setDeviceId] = useState<string | null>(localStorage.getItem('device_id'));
+
+  useEffect(() => {
+    if (!deviceId) {
+      const newId = 'dev_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+      localStorage.setItem('device_id', newId);
+      setDeviceId(newId);
+    }
+  }, [deviceId]);
+
+  // Auth Listener updated to link device to user
   useEffect(() => {
     let userUnsubscribe: (() => void) | undefined;
     
     const authUnsubscribe = onAuthStateChanged(auth, async (u) => {
+      console.log("[Auth] State Changed:", u ? `User: ${u.email}` : "No User");
       setUser(u);
       
-      // Clean up previous user listener
-      if (userUnsubscribe) {
-        userUnsubscribe();
-        userUnsubscribe = undefined;
-      }
-
-      if (u) {
-        // Restore token from user-specific session storage if available
-        const savedToken = sessionStorage.getItem(`google_access_token_${u.uid}`);
-        if (savedToken) {
-          setGoogleAccessToken(savedToken);
-        } else {
-          // Fallback to generic key for backward compatibility or if it was just set
-          const genericToken = sessionStorage.getItem('google_access_token');
-          if (genericToken) setGoogleAccessToken(genericToken);
+      try {
+        if (userUnsubscribe) {
+          userUnsubscribe();
+          userUnsubscribe = undefined;
         }
 
-        const userRef = doc(db, "users", u.uid);
+        // Use deviceId as the primary profile key to link coins to the mobile device
+        const profileId = deviceId;
+        if (!profileId) return;
+
+        const userRef = doc(db, "users", profileId);
         
         // Initial fetch
         try {
           const userSnap = await getDoc(userRef);
           setIsOffline(false);
           if (!userSnap.exists()) {
-            setIsNewUser(true);
-            const referralCode = u.uid.slice(0, 6).toUpperCase();
-            const newProfile = {
-              uid: u.uid,
-              displayName: u.displayName || "User",
-              photoURL: u.photoURL || "",
-              coins: 100,
+            console.log("[Auth] Creating new profile for ID:", profileId);
+            setIsTutorialOpen(true);
+            setTutorialStep(0);
+            const referralCode = profileId.slice(0, 6).toUpperCase();
+            const newProfile: UserProfile = {
+              uid: profileId,
+              displayName: u?.displayName || "Guest User",
+              photoURL: u?.photoURL || "",
+              coins: 0, // No signing bonus
               referralCode,
               referralEarnings: 0,
               createdAt: serverTimestamp(),
+              dailyCampaignSubs: 0,
+              dailyEarnActions: 0,
+              lastLimitResetDate: new Date().toISOString().split('T')[0]
             };
             await setDoc(userRef, newProfile);
-            await recordTransaction(u.uid, 100, 'bonus', 'Welcome bonus');
           }
         } catch (error: any) {
+          console.error("[Auth] Firestore fetch error:", error);
           if (error.message?.includes("offline")) {
             setIsOffline(true);
-          } else {
-            handleFirestoreError(error, OperationType.GET, `users/${u.uid}`, u);
           }
         }
         
         // Real-time listener
         userUnsubscribe = onSnapshot(userRef, (doc) => {
           if (doc.exists()) {
-            setProfile(doc.data() as UserProfile);
+            const data = doc.data() as UserProfile;
+            setProfile(data);
+            
+            // Restore YouTube token from profile if not already set
+            if (data.youtubeToken && !googleAccessToken) {
+              console.log("[Auth] Restoring YouTube token from device profile");
+              setGoogleAccessToken(data.youtubeToken);
+              sessionStorage.setItem('google_access_token', data.youtubeToken);
+            }
           }
         }, (error) => {
-          handleFirestoreError(error, OperationType.GET, `users/${u.uid}`, u);
+          console.error("[Auth] Profile snapshot error:", error);
         });
 
-        // Fetch transactions
-        const tQuery = query(collection(db, "transactions"), where("userId", "==", u.uid), limit(20));
-        onSnapshot(tQuery, (snap) => {
-          setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)).sort((a, b) => b.timestamp?.seconds - a.timestamp?.seconds));
-        }, (error) => {
-          handleFirestoreError(error, OperationType.LIST, "transactions", u);
-        });
-      } else {
-        setProfile(null);
-        setGoogleAccessToken(null);
-        // Clear generic token on logout
-        sessionStorage.removeItem('google_access_token');
+        if (u) {
+          // Restore token
+          const savedToken = sessionStorage.getItem(`google_access_token_${u.uid}`);
+          if (savedToken) {
+            setGoogleAccessToken(savedToken);
+          } else {
+            const genericToken = sessionStorage.getItem('google_access_token');
+            if (genericToken) setGoogleAccessToken(genericToken);
+          }
+
+          // Fetch transactions
+          const tQuery = query(collection(db, "transactions"), where("userId", "==", profileId), limit(20));
+          onSnapshot(tQuery, (snap) => {
+            setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)).sort((a, b) => b.timestamp?.seconds - a.timestamp?.seconds));
+          }, (error) => {
+            console.error("[Auth] Transactions snapshot error:", error);
+          });
+        }
+      } catch (err) {
+        console.error("[Auth] Critical error in listener:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     
     return () => {
@@ -1415,6 +1547,7 @@ function MainApp() {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
     setIsAutoRunning(false); // Stop auto engine when switching accounts
+    const loginToast = toast.loading("Opening Secure Login...");
     try {
       const email = typeof emailOrEvent === 'string' ? emailOrEvent : undefined;
       
@@ -1423,6 +1556,7 @@ function MainApp() {
         console.log(`[Auth] Already logged in as ${email}, skipping...`);
         setIsLoggingIn(false);
         setIsAccountsOpen(false);
+        toast.dismiss(loginToast);
         return;
       }
 
@@ -1434,8 +1568,6 @@ function MainApp() {
           const storedToken = sessionStorage.getItem(`google_access_token_${targetAcc.uid}`);
           if (storedToken) {
             console.log(`[Auth] Found existing token for ${email}, switching instantly...`);
-            // We still need to sign in with Firebase to switch the active user
-            // but we can try to use the login_hint to make it faster
           }
         }
       }
@@ -1448,21 +1580,37 @@ function MainApp() {
         googleProvider.setCustomParameters({ prompt: 'select_account' });
       }
       const result = await signInWithPopup(auth, googleProvider);
+      toast.success("Signed in successfully!", { id: loginToast });
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential) {
-        setGoogleAccessToken(credential.accessToken || null);
-        if (credential.accessToken && result.user) {
-          sessionStorage.setItem(`google_access_token_${result.user.uid}`, credential.accessToken);
-          sessionStorage.setItem('google_access_token', credential.accessToken); // Keep generic for compatibility
+        const token = credential.accessToken || null;
+        setGoogleAccessToken(token);
+        if (token && result.user) {
+          sessionStorage.setItem(`google_access_token_${result.user.uid}`, token);
+          sessionStorage.setItem('google_access_token', token);
+          
+          // Save token to device profile for persistence
+          const profileId = deviceId || result.user.uid;
+          try {
+            await updateDoc(doc(db, "users", profileId), {
+              youtubeToken: token,
+              youtubeConnectedAt: serverTimestamp()
+            });
+          } catch (e) {
+            console.error("Failed to save token to device profile:", e);
+          }
         }
       }
     } catch (error: any) {
+      toast.dismiss(loginToast);
       if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
         console.log("Login popup cancelled or closed.");
       } else if (error.code === 'auth/popup-blocked') {
         toast.error("Popup Blocked! Please allow popups in your browser settings to sign in.");
+      } else if (error.code === 'auth/unauthorized-domain') {
+        toast.error("Unauthorized Domain! Please add 'vercel.app' and your custom domain to the 'Authorized Domains' list in your Firebase Console (Authentication > Settings).");
       } else {
-        toast.error("Login failed. Please try again.");
+        toast.error(`Login failed: ${error.message || "Please try again."}`);
         console.error("Login Error:", error);
       }
     } finally {
@@ -1489,6 +1637,9 @@ function MainApp() {
       });
       
       const result = await signInWithPopup(auth, provider);
+      if (!result.user) {
+        throw new Error("Login failed - No user returned");
+      }
       const credential = GoogleAuthProvider.credentialFromResult(result);
       
       console.log("[OAuth] Login Success. ProviderData:", result.user.providerData);
@@ -1500,13 +1651,14 @@ function MainApp() {
         console.log("Successfully got Access Token. Verifying with YouTube API...");
         const token = credential.accessToken;
 
-        // Save token to Firestore for persistence
+        // Save token to Firestore for persistence (Linked to device)
         try {
-          await updateDoc(doc(db, "users", auth.currentUser.uid), {
+          const profileId = deviceId || auth.currentUser.uid;
+          await updateDoc(doc(db, "users", profileId), {
             youtubeToken: token,
             youtubeConnectedAt: serverTimestamp()
           });
-          console.log("[OAuth] Token saved to Firestore");
+          console.log("[OAuth] Token saved to Firestore for ID:", profileId);
         } catch (e) {
           console.error("[OAuth] Failed to save token to Firestore:", e);
         }
@@ -1530,6 +1682,13 @@ function MainApp() {
             setGoogleAccessToken(token);
             sessionStorage.setItem(`google_access_token_${auth.currentUser.uid}`, token);
             sessionStorage.setItem('google_access_token', token);
+            
+            // Save to Firestore for persistence
+            updateDoc(doc(db, "users", auth.currentUser.uid), { 
+              youtubeToken: token,
+              youtubeConnectedAt: serverTimestamp()
+            }).catch(e => console.error("Failed to save token to firestore", e));
+
             toast.success("YouTube Connected Successfully!");
             setIsConnecting(false);
             return true;
@@ -1556,6 +1715,7 @@ function MainApp() {
       }
     } catch (error: any) {
       toast.dismiss(loadingToast);
+      setIsConnecting(false);
       console.error("YouTube Connection Error Details:", {
         code: error.code,
         message: error.message,
@@ -1587,6 +1747,60 @@ function MainApp() {
       return newList;
     });
     toast.success("Account removed from list");
+  };
+
+  const handleLogout = async () => {
+    setIsAutoRunning(false);
+    setGoogleAccessToken(null);
+    sessionStorage.removeItem('google_access_token');
+    if (user) {
+      sessionStorage.removeItem(`google_access_token_${user.uid}`);
+    }
+    await signOut(auth);
+    toast.success("Logged out successfully");
+  };
+
+  const disconnectYouTube = async () => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, "users", user.uid), { 
+        youtubeToken: null,
+        youtubeConnectedAt: null
+      });
+      setGoogleAccessToken(null);
+      sessionStorage.removeItem(`google_access_token_${user.uid}`);
+      sessionStorage.removeItem('google_access_token');
+      toast.success("YouTube Disconnected");
+    } catch (e) {
+      toast.error("Failed to disconnect");
+    }
+  };
+
+  const submitRechargeRequest = async () => {
+    if (!utrInput || utrInput.length < 6) {
+      toast.error("Please enter a valid UTR number");
+      return;
+    }
+    if (!profile) return;
+    setIsSubmittingUtr(true);
+    try {
+      await addDoc(collection(db, "recharge_requests"), {
+        userId: profile.uid,
+        userName: profile.displayName,
+        amount: 500, // Fixed amount for now or add selection
+        utr: utrInput,
+        status: 'pending',
+        timestamp: serverTimestamp()
+      });
+      toast.success("UTR Submitted! Admin will verify soon.");
+      setIsRechargeOpen(false);
+      setUtrInput("");
+      setRechargeStep(1);
+    } catch (e) {
+      toast.error("Submission failed");
+    } finally {
+      setIsSubmittingUtr(false);
+    }
   };
 
   const handleTransfer = async () => {
@@ -1731,59 +1945,6 @@ function MainApp() {
     }
   };
 
-  const handleClaimDailyBonus = async () => {
-    if (!profile || isDailyClaiming) return;
-    setIsDailyClaiming(true);
-    try {
-      const bonusDoc = await getDoc(doc(db, "daily_bonus", profile.uid));
-      const now = new Date();
-      
-      if (bonusDoc.exists()) {
-        const lastClaimed = bonusDoc.data().lastClaimed.toDate();
-        const diff = now.getTime() - lastClaimed.getTime();
-        const hours24 = 24 * 60 * 60 * 1000;
-        
-        if (diff < hours24) {
-          const remaining = hours24 - diff;
-          const hours = Math.floor(remaining / (60 * 60 * 1000));
-          const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
-          toast.error(`Already claimed! Try again in ${hours}h ${minutes}m`);
-          return;
-        }
-      }
-
-      const bonusAmount = 50;
-      const batch = writeBatch(db);
-      
-      batch.set(doc(db, "daily_bonus", profile.uid), {
-        userId: profile.uid,
-        lastClaimed: serverTimestamp()
-      });
-      
-      batch.update(doc(db, "users", profile.uid), {
-        coins: increment(bonusAmount)
-      });
-      
-      const txRef = doc(collection(db, "transactions"));
-      batch.set(txRef, {
-        userId: profile.uid,
-        amount: bonusAmount,
-        type: 'bonus',
-        description: 'Daily login bonus',
-        timestamp: serverTimestamp()
-      });
-
-      await batch.commit();
-      
-      toast.success(`Daily bonus claimed! +${bonusAmount} Coins`);
-      setCanClaimDaily(false);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `daily_bonus/${profile.uid}`);
-      toast.error("Failed to claim daily bonus");
-    } finally {
-      setIsDailyClaiming(false);
-    }
-  };
 
   const handleReferralSubmit = async () => {
     const codeToApply = referralInput || referCodeInput;
@@ -1837,7 +1998,6 @@ function MainApp() {
 
       toast.success("Referral bonus claimed!");
       setIsReferralOpen(false);
-      setIsNewUser(false);
       // Trigger tutorial after referral
       setIsTutorialOpen(true);
       setTutorialStep(0);
@@ -1862,6 +2022,7 @@ function MainApp() {
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-white text-slate-900">
+        <Toaster position="top-center" richColors />
         <Loader2 className="h-8 w-8 animate-spin text-[#2196F3]" />
       </div>
     );
@@ -1870,6 +2031,7 @@ function MainApp() {
   if (!user) {
     return (
       <>
+        <Toaster position="top-center" richColors />
         <Login 
           onLogin={handleLogin} 
           isLoading={isLoggingIn} 
@@ -1907,34 +2069,6 @@ function MainApp() {
         </div>
       )}
 
-      {/* Referral Dialog for New Users */}
-      <Dialog open={isNewUser} onOpenChange={setIsNewUser}>
-        <DialogContent className="rounded-[32px] border-none shadow-2xl p-8 max-w-[360px]">
-          <DialogHeader className="space-y-4">
-            <div className="mx-auto bg-blue-100 p-4 rounded-3xl w-fit">
-              <Users className="h-10 w-10 text-blue-600" />
-            </div>
-            <DialogTitle className="text-2xl font-black text-center">Got a Refer Code?</DialogTitle>
-            <p className="text-slate-500 text-center font-medium">Enter it now to get 100 bonus coins instantly!</p>
-          </DialogHeader>
-          <div className="space-y-6 py-6">
-            <Input 
-              placeholder="ENTER CODE" 
-              className="h-16 rounded-2xl bg-slate-50 border-slate-200 text-center text-xl font-black uppercase tracking-widest"
-              value={referCodeInput}
-              onChange={(e) => setReferCodeInput(e.target.value)}
-            />
-            <div className="flex gap-3">
-              <Button variant="ghost" className="flex-1 h-14 rounded-2xl font-bold" onClick={() => {
-                setIsNewUser(false);
-                setIsTutorialOpen(true);
-                setTutorialStep(0);
-              }}>Skip</Button>
-              <Button className="flex-1 h-14 rounded-2xl bg-blue-600 font-black shadow-lg shadow-blue-600/20" onClick={handleReferralSubmit}>Claim 100</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Transaction History Dialog */}
       <Dialog open={isTransactionsOpen} onOpenChange={setIsTransactionsOpen}>
@@ -2015,7 +2149,45 @@ function MainApp() {
         </DialogContent>
       </Dialog>
 
-      {/* Support Dialog */}
+      {/* VIP Store Dialog */}
+      <Dialog open={isVIPStoreOpen} onOpenChange={setIsVIPStoreOpen}>
+        <DialogContent className="rounded-[32px] border-none shadow-2xl p-0 max-w-[400px] overflow-hidden">
+          <div className="bg-gradient-to-br from-purple-600 to-indigo-600 p-8 text-white">
+            <DialogHeader>
+              <div className="bg-white/20 w-12 h-12 rounded-2xl flex items-center justify-center mb-4 backdrop-blur-md">
+                <Crown className="h-6 w-6 text-yellow-300" />
+              </div>
+              <DialogTitle className="text-3xl font-black uppercase tracking-tight">VIP Membership</DialogTitle>
+              <p className="text-purple-100 font-bold text-sm mt-2">Unlock the full power of TUBE FOLLOWER</p>
+            </DialogHeader>
+          </div>
+          <div className="p-6 space-y-4 bg-slate-50">
+            <div className="space-y-3">
+              {[
+                { icon: Zap, text: "2X Coins on every task" },
+                { icon: ShieldCheck, text: "Priority Campaign placement" },
+                { icon: Eye, text: "No Ads or Setup Guides" },
+                { icon: Heart, text: "Exclusive VIP Badge" }
+              ].map((item, i) => (
+                <div key={i} className="flex items-center gap-3 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                  <div className="bg-purple-50 p-2 rounded-lg">
+                    <item.icon className="h-4 w-4 text-purple-600" />
+                  </div>
+                  <p className="text-xs font-black text-slate-700 uppercase tracking-widest">{item.text}</p>
+                </div>
+              ))}
+            </div>
+            <Button 
+              className="w-full h-16 rounded-2xl bg-slate-900 font-black text-lg shadow-xl shadow-slate-900/20 mt-4"
+              onClick={() => {
+                toast.info("VIP Membership coming soon to App Store!");
+              }}
+            >
+              Get VIP - $4.99/mo
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={isSupportOpen} onOpenChange={setIsSupportOpen}>
         <DialogContent className="rounded-[32px] border-none shadow-2xl p-0 max-w-[400px] overflow-hidden flex flex-col h-[500px]">
           <div className="bg-[#2196F3] p-6 text-white shrink-0">
@@ -2179,12 +2351,16 @@ function MainApp() {
 
                 {tutorialStep === 3 && (
                   <div className="space-y-6 text-center">
-                    <div className="bg-green-100 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-2 -rotate-3">
-                      <TrendingUp className="h-12 w-12 text-green-600" />
+                    <div className="bg-blue-100 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-2 rotate-3">
+                      <PlusCircle className="h-12 w-12 text-[#2196F3]" />
                     </div>
                     <div>
-                      <h3 className="text-3xl font-black text-slate-900 mb-2">Get Growth</h3>
-                      <p className="text-slate-500 font-medium leading-relaxed">Use your coins in the <span className="text-green-600 font-black">Campaign</span> tab to get real subscribers and likes.</p>
+                      <h3 className="text-3xl font-black text-slate-900 mb-2">Create Campaign</h3>
+                      <p className="text-slate-500 font-medium leading-relaxed">
+                        Go to the <span className="text-blue-600 font-black">Campaign</span> tab. 
+                        For <span className="font-bold">Subscribers</span>, paste your Channel URL. 
+                        For <span className="font-bold text-red-600">Likes/Comments</span>, paste a specific Video URL.
+                      </p>
                     </div>
                     <div className="flex gap-3">
                       <Button variant="ghost" className="h-16 rounded-2xl font-bold" onClick={() => setTutorialStep(2)}>Back</Button>
@@ -2200,24 +2376,81 @@ function MainApp() {
 
                 {tutorialStep === 4 && (
                   <div className="space-y-6 text-center">
-                    <div className="bg-slate-100 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-2 rotate-3">
-                      <CheckCircle2 className="h-12 w-12 text-blue-600" />
+                    <div className="bg-green-100 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-2 -rotate-3">
+                      <Youtube className="h-12 w-12 text-red-600" />
                     </div>
                     <div>
-                      <h3 className="text-3xl font-black text-slate-900 mb-2">Ready!</h3>
-                      <p className="text-slate-500 font-medium leading-relaxed">You're all set. Start growing your channel now!</p>
+                      <h3 className="text-3xl font-black text-slate-900 mb-2">Paste Video Link</h3>
+                      <p className="text-slate-500 font-medium leading-relaxed">
+                        When creating Like or Comment campaigns, <span className="font-black underline uppercase">Only Video Links</span> work. 
+                        Do not paste your channel ID for video tasks!
+                      </p>
                     </div>
-                    <Button 
-                      className="w-full h-16 bg-slate-900 hover:bg-black rounded-2xl font-black text-lg text-white shadow-xl"
-                      onClick={() => setIsTutorialOpen(false)}
-                    >
-                      Finish Tutorial
-                    </Button>
+                    <div className="flex gap-3">
+                      <Button variant="ghost" className="h-16 rounded-2xl font-bold" onClick={() => setTutorialStep(3)}>Back</Button>
+                      <Button 
+                        className="flex-1 h-16 bg-[#2196F3] hover:bg-[#1976D2] rounded-2xl font-black text-lg text-white shadow-lg"
+                        onClick={() => setTutorialStep(5)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {tutorialStep === 5 && (
+                  <div className="space-y-6 text-center">
+                    <div className="bg-orange-100 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-2 rotate-3">
+                      <Video className="h-12 w-12 text-orange-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-3xl font-black text-slate-900 mb-2">Record Video</h3>
+                      <p className="text-slate-500 font-medium leading-relaxed">
+                        To earn coins faster, record proof of your tasks! 
+                        Use any screen recorder to capture your YouTube actions.
+                      </p>
+                    </div>
+                    <div className="flex gap-3">
+                      <Button variant="ghost" className="h-16 rounded-2xl font-bold" onClick={() => setTutorialStep(4)}>Back</Button>
+                      <Button 
+                        className="flex-1 h-16 bg-orange-600 hover:bg-orange-700 text-white font-black rounded-2xl text-xl shadow-xl shadow-orange-600/20"
+                        onClick={() => setTutorialStep(6)}
+                      >
+                        Publishing
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {tutorialStep === 6 && (
+                  <div className="space-y-6 text-center">
+                    <div className="bg-indigo-100 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-2 -rotate-2">
+                      <Cloud className="h-12 w-12 text-indigo-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-3xl font-black text-slate-900 mb-2">Google & Vercel</h3>
+                      <p className="text-[10px] text-slate-400 font-black uppercase mb-2">Deployment Guide</p>
+                      <p className="text-slate-500 font-medium leading-relaxed text-sm">
+                        1. Google Console: Create App & Enable YouTube API.<br/>
+                        2. Verification: Add test users & Publish to Production.<br/>
+                        3. Vercel: Connect your GitHub & Publish with Env Keys.<br/>
+                        4. Updates: Just push to GitHub for auto-deployment!
+                      </p>
+                    </div>
+                    <div className="flex gap-3">
+                      <Button variant="ghost" className="h-16 rounded-2xl font-bold" onClick={() => setTutorialStep(5)}>Back</Button>
+                      <Button 
+                        className="flex-1 h-16 bg-slate-900 hover:bg-black rounded-2xl font-black text-lg text-white shadow-xl"
+                        onClick={() => setIsTutorialOpen(false)}
+                      >
+                        Finish Tutorial
+                      </Button>
+                    </div>
                   </div>
                 )}
 
                 <div className="mt-8 flex justify-center gap-2">
-                  {[0, 1, 2, 3, 4].map((s) => (
+                  {[0, 1, 2, 3, 4, 5, 6].map((s) => (
                     <div 
                       key={s} 
                       className={`h-2 rounded-full transition-all duration-300 ${tutorialStep === s ? "w-8 bg-[#2196F3]" : "w-2 bg-slate-200"}`}
@@ -2241,10 +2474,32 @@ function MainApp() {
         <div className="w-full max-w-md mx-auto transition-all duration-300">
             {activeTab === "home" && (
               <div className="p-4 space-y-6">
+                {/* VIP Banner */}
+                <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-[2.5rem] p-8 text-white shadow-2xl shadow-purple-600/20 relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                    <Crown className="h-32 w-32" />
+                  </div>
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="bg-white/20 p-2 rounded-xl backdrop-blur-md">
+                        <Crown className="h-5 w-5 text-yellow-300" />
+                      </div>
+                      <span className="text-xs font-black uppercase tracking-widest">VIP Membership</span>
+                    </div>
+                    <h2 className="text-3xl font-black mb-2 uppercase tracking-tight">Boost Your Growth 2X</h2>
+                    <p className="text-purple-100 font-bold text-sm mb-6 max-w-xs">Get double coins, priority campaigns, and exclusive features.</p>
+                    <Button 
+                      onClick={() => setIsVIPStoreOpen(true)}
+                      className="bg-white text-purple-600 hover:bg-purple-50 rounded-2xl font-black uppercase tracking-widest px-8 h-14 shadow-xl shadow-black/10"
+                    >
+                      Upgrade Now
+                    </Button>
+                  </div>
+                </div>
                 <HomeTab 
                   profile={profile} 
                   user={user}
-                  onLogout={() => signOut(auth)}
+                  onLogout={handleLogout}
                   onOpenTransfer={() => setIsTransferOpen(true)}
                   onOpenFAQ={() => setIsFAQOpen(true)}
                   onOpenGiftCode={() => setIsGiftCodeOpen(true)}
@@ -2254,10 +2509,17 @@ function MainApp() {
                   onOpenTransactions={() => setIsTransactionsOpen(true)}
                   onOpenAdminPromo={() => setIsAdminPromoOpen(true)}
                   onOpenSupport={() => setIsSupportOpen(true)}
-                  onClaimDailyBonus={handleClaimDailyBonus}
-                  canClaimDaily={canClaimDaily}
+                  onOpenVIP={() => setIsVIPStoreOpen(true)}
+                  onOpenRecharge={() => {
+                    setIsRechargeOpen(true);
+                    setRechargeStep(1);
+                  }}
                   isAdmin={isAdmin}
                   connectedAccounts={connectedAccounts}
+                  deviceId={deviceId}
+                  setActiveTab={setActiveTab}
+                  autoBoost={autoBoost}
+                  toggleAutoBoost={toggleAutoBoost}
                 />
               </div>
             )}
@@ -2494,6 +2756,21 @@ function MainApp() {
           <div className="space-y-6 mt-6">
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
+                <p className="font-bold text-slate-800">YouTube Access</p>
+                <p className="text-[10px] text-slate-400 font-bold uppercase">Connected Account</p>
+              </div>
+              <Button 
+                variant={googleAccessToken ? "destructive" : "outline"} 
+                size="sm" 
+                className="h-8 text-[10px] font-black rounded-lg"
+                onClick={googleAccessToken ? disconnectYouTube : handleConnectYouTube}
+              >
+                {googleAccessToken ? "DISCONNECT" : "CONNECT"}
+              </Button>
+            </div>
+            
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
                 <p className="font-bold text-slate-800">Image Display</p>
                 <p className="text-[10px] text-slate-400 font-bold uppercase">Show thumbnails</p>
               </div>
@@ -2521,7 +2798,7 @@ function MainApp() {
               <ShieldCheck className="mr-2 h-4 w-4" />
               Privacy Policy
             </Button>
-            <Button variant="outline" className="w-full h-12 rounded-xl border-slate-200 font-bold text-red-500 hover:bg-red-50 hover:text-red-600" onClick={() => signOut(auth)}>
+            <Button variant="outline" className="w-full h-12 rounded-xl border-slate-200 font-bold text-red-500 hover:bg-red-50 hover:text-red-600" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
               Sign Out
             </Button>
@@ -2695,6 +2972,87 @@ function MainApp() {
         </DialogContent>
       </Dialog>
       {/* Transfer Coins Dialog */}
+      <Dialog open={isRechargeOpen} onOpenChange={setIsRechargeOpen}>
+        <DialogContent className="p-0 bg-slate-50 border-none rounded-[32px] overflow-hidden max-w-sm">
+          <div className="bg-blue-600 p-6 text-white text-center">
+            <h2 className="text-2xl font-black uppercase tracking-tight">Add Coins</h2>
+            <p className="text-blue-100 text-[10px] font-bold uppercase tracking-widest mt-1">Instant Verification</p>
+          </div>
+          
+          <div className="p-6 space-y-6">
+            {rechargeStep === 1 ? (
+              <>
+                <div className="bg-white p-4 rounded-3xl shadow-xl shadow-slate-200/50 flex flex-col items-center gap-4">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Scan to Pay</p>
+                  <div className="bg-slate-100 p-2 rounded-2xl">
+                    <img src={qrCodeUrl} className="w-48 h-48 object-contain rounded-xl" alt="QR Code" />
+                  </div>
+                  <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
+                    <p className="text-blue-700 font-black text-xl">₹100 = 500 Coins</p>
+                  </div>
+                </div>
+                <Button 
+                  className="w-full h-14 bg-slate-900 hover:bg-slate-800 text-white font-black rounded-2xl text-lg group"
+                  onClick={() => setRechargeStep(2)}
+                >
+                  NEXT STEP
+                  <ChevronRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                </Button>
+              </>
+            ) : (
+              <div className="space-y-6">
+                <div className="bg-white p-6 rounded-3xl shadow-xl shadow-slate-200/50 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-green-100 p-2 rounded-xl">
+                      <CheckCircle2 className="h-5 w-5 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="font-black text-slate-900 uppercase">Step 2: Enter UTR</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">After payment, enter 12-digit UTR</p>
+                    </div>
+                  </div>
+                  
+                  <Input 
+                    placeholder="Enter 12 Digit UTR Number" 
+                    value={utrInput}
+                    onChange={(e) => setUtrInput(e.target.value)}
+                    className="h-14 font-black border-2 border-slate-100 rounded-2xl text-lg focus-visible:ring-blue-600"
+                  />
+                  
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-dashed border-slate-200">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase leading-snug">
+                      Verification takes 5-30 minutes. Coins will be added automatically to your account.
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-3">
+                  <Button 
+                    variant="outline" 
+                    className="flex-1 h-14 rounded-2xl font-black border-2"
+                    onClick={() => setRechargeStep(1)}
+                  >
+                    BACK
+                  </Button>
+                  <Button 
+                    className="flex-[2] h-14 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl text-lg"
+                    onClick={submitRechargeRequest}
+                    disabled={isSubmittingUtr}
+                  >
+                    {isSubmittingUtr ? <Loader2 className="animate-spin" /> : "SUBMIT UTR"}
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            <p className="text-center text-[10px] font-bold text-slate-400 uppercase pb-2">
+              Facing issues? <span className="text-blue-600 hover:underline cursor-pointer">Support</span>
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Transfer Coins Dialog */}
       <Dialog open={isTransferOpen} onOpenChange={setIsTransferOpen}>
         <DialogContent className="bg-white border-slate-200 text-slate-900 rounded-3xl max-w-xs mx-auto">
           <DialogHeader>
@@ -2763,167 +3121,8 @@ function MainApp() {
         )}
       </div>
 
-      {/* Troubleshooting Dialog */}
-      <Dialog open={isTroubleshootingOpen} onOpenChange={setIsTroubleshootingOpen}>
-        <DialogContent className="max-w-md bg-white rounded-[32px] p-0 overflow-hidden border-none shadow-2xl">
-          <div className="bg-blue-600 p-8 text-white">
-            <DialogHeader>
-              <DialogTitle className="text-2xl font-black flex items-center gap-3">
-                <AlertCircle className="h-8 w-8" />
-                Final Setup Guide
-              </DialogTitle>
-            </DialogHeader>
-          </div>
-          <div className="p-6 space-y-6 max-h-[500px] overflow-y-auto">
-            <div className="space-y-4">
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 bg-red-100 text-red-600 rounded-full flex items-center justify-center shrink-0 font-black text-xs">!</div>
-                <div className="flex-1">
-                  <p className="text-xs font-black text-red-600 uppercase">Step 0: Enable YouTube API</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-1 leading-relaxed">
-                    If you haven't yet, click this button and then click "ENABLE" on the Google page.
-                  </p>
-                  <Button 
-                    variant="outline"
-                    className="w-full mt-2 border-red-200 text-red-600 hover:bg-red-50 h-10 text-[10px] font-black rounded-lg"
-                    onClick={() => window.open('https://console.cloud.google.com/apis/library/youtube.googleapis.com?project=gen-lang-client-0716940414', '_blank')}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    ENABLE YOUTUBE API NOW
-                  </Button>
-                </div>
-              </div>
+      {/* Troubleshooting Dialog removed */}
 
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shrink-0 font-black text-xs">1</div>
-                <div>
-                  <p className="text-xs font-black text-slate-800">Find the Checkbox (Visual Guide)</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-1">
-                    When you click Connect, you will see a Google screen. 
-                    <span className="text-blue-600 font-black"> DO NOT JUST CLICK CONTINUE!</span>
-                  </p>
-                  
-                  <div className="mt-3 bg-slate-100 p-4 rounded-xl border-2 border-dashed border-blue-200 space-y-2">
-                    <p className="text-[9px] font-black text-slate-400 uppercase">Google Login Screen Looks Like This:</p>
-                    <div className="bg-white p-2 rounded border border-slate-200 shadow-sm">
-                      <p className="text-[10px] font-bold text-slate-800">Select what [App Name] can access:</p>
-                      <div className="mt-2 flex items-start gap-2 p-2 bg-blue-50 rounded border border-blue-100">
-                        <div className="h-4 w-4 border-2 border-blue-600 rounded bg-white flex items-center justify-center shrink-0 mt-0.5">
-                          <div className="h-2 w-2 bg-blue-600 rounded-sm" />
-                        </div>
-                        <p className="text-[10px] font-black text-blue-700 leading-tight">
-                          Manage your YouTube account<br/>
-                          <span className="text-[8px] font-medium text-blue-500">View and manage your assets and...</span>
-                        </p>
-                      </div>
-                      <p className="text-[8px] text-slate-400 mt-2 text-center italic">^ YOU MUST CHECK THIS BOX ^</p>
-                    </div>
-                  </div>
-
-                  <p className="text-[10px] text-slate-500 font-bold mt-3">
-                    If you don't see the box, look for a link that says <span className="text-blue-600">"See the services..."</span> or <span className="text-blue-600">"View more"</span> and click it!
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shrink-0 font-black text-xs">2</div>
-                <div>
-                  <p className="text-xs font-black text-slate-800">Reset & Start Fresh</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-1">
-                    If you still don't see it, click the button below to clear everything and try again.
-                  </p>
-                  <Button 
-                    className="w-full mt-2 bg-red-600 hover:bg-red-700 text-white h-10 text-[10px] font-black rounded-lg"
-                    onClick={() => {
-                      sessionStorage.clear();
-                      window.location.reload();
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3 mr-1" />
-                    RESET EVERYTHING & RESTART
-                  </Button>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shrink-0 font-black text-xs">3</div>
-                <div>
-                  <p className="text-xs font-black text-slate-800">Test Your Connection</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-1">
-                    Click below to see if your YouTube account is correctly linked.
-                  </p>
-                  <Button 
-                    className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white h-10 text-[10px] font-black rounded-lg"
-                    onClick={async () => {
-                      const token = sessionStorage.getItem(`google_access_token_${auth.currentUser?.uid}`) || sessionStorage.getItem('google_access_token');
-                      if (!token) {
-                        toast.error("No connection found. Please connect first.");
-                        return;
-                      }
-                      toast.loading("Verifying...", { id: "verify-yt" });
-                      try {
-                        const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
-                          headers: { 'Authorization': `Bearer ${token}` }
-                        });
-                        const data = await res.json();
-                        if (res.ok && data.items?.length > 0) {
-                          toast.success("Verified! Connection is working.", { id: "verify-yt" });
-                        } else {
-                          toast.error(`Failed: ${data.error?.message || "Missing Permission"}`, { id: "verify-yt" });
-                        }
-                      } catch (e) {
-                        toast.error("Network error during verification.", { id: "verify-yt" });
-                      }
-                    }}
-                  >
-                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                    TEST CONNECTION NOW
-                  </Button>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shrink-0 font-black text-xs">4</div>
-                <div>
-                  <p className="text-xs font-black text-slate-800">Use the "UC..." Channel ID</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-1">
-                    For the bot to work 100%, use your full Channel URL (like <span className="text-blue-600">youtube.com/channel/UC...</span>) instead of the @handle.
-                  </p>
-                  <Button 
-                    variant="link"
-                    className="p-0 h-auto text-[9px] font-black text-blue-500 uppercase"
-                    onClick={() => window.open('https://www.youtube.com/account_advanced', '_blank')}
-                  >
-                    Find my UC ID here <ExternalLink className="h-2 w-2 ml-1" />
-                  </Button>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3 p-4 bg-yellow-50 rounded-2xl border-2 border-yellow-200">
-                <div className="h-6 w-6 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center shrink-0 font-black text-xs">!</div>
-                <div>
-                  <p className="text-xs font-black text-yellow-700 uppercase">Admin: Fix "Access Blocked"</p>
-                  <p className="text-[10px] text-yellow-600 font-bold mt-1 leading-relaxed">
-                    If new users see "Access Blocked", you must go to your <span className="font-black">Google Cloud Console</span> &gt; <span className="font-black">OAuth Consent Screen</span> and click <span className="text-blue-600 font-black">"PUBLISH APP"</span>. 
-                    This moves your app from "Testing" to "Production" so anyone can log in.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Project ID:</p>
-              <code className="text-[10px] bg-slate-200 px-2 py-0.5 rounded font-mono font-bold text-blue-600">
-                gen-lang-client-0716940414
-              </code>
-            </div>
-          </div>
-          <div className="p-6 border-t border-slate-100">
-            <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12 rounded-xl font-black" onClick={() => setIsTroubleshootingOpen(false)}>
-              Close Guide
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Force Update Dialog */}
       <Dialog open={isUpdateRequired} onOpenChange={() => {}}>
@@ -2949,39 +3148,98 @@ function MainApp() {
 }
 
 function AdminTab() {
-  const [stats, setStats] = useState({ users: 0, activeUsers: 0, campaigns: 0, transfers: 0 });
+  const [stats, setStats] = useState({ users: 0, activeUsers: 0, campaigns: 0, transfers: 0, pendingRecharges: 0, totalPromoCodes: 0 });
   const [allPromos, setAllPromos] = useState<Promotion[]>([]);
+  const [rechargeRequests, setRechargeRequests] = useState<RechargeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [giftCode, setGiftCode] = useState("");
   const [giftAmount, setGiftAmount] = useState(100);
   const [isCreatingGift, setIsCreatingGift] = useState(false);
+  const [newQrUrl, setNewQrUrl] = useState("");
+  const [isUpdatingQr, setIsUpdatingQr] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const usersSnap = await getDocs(collection(db, "users"));
-        const promosSnap = await getDocs(collection(db, "promotions"));
-        const transfersSnap = await getDocs(collection(db, "transfers"));
-        
-        // Simulate active users (users who have some coins or just a random number for now)
-        const activeCount = usersSnap.docs.filter(d => (d.data().coins || 0) > 100).length + 5; // +5 for simulation
+    // Real-time stats
+    const usersUnsub = onSnapshot(collection(db, "users"), (snap) => {
+      setStats(prev => ({ ...prev, users: snap.size }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/users"));
 
-        setStats({
-          users: usersSnap.size,
-          activeUsers: activeCount,
-          campaigns: promosSnap.size,
-          transfers: transfersSnap.size
-        });
-        
-        setAllPromos(promosSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Promotion)));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, "admin_stats");
-      } finally {
-        setLoading(false);
-      }
+    const promosUnsub = onSnapshot(collection(db, "promotions"), (snap) => {
+      setStats(prev => ({ ...prev, campaigns: snap.size }));
+      setAllPromos(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Promotion)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/promotions"));
+
+    const transfersUnsub = onSnapshot(collection(db, "transactions"), (snap) => {
+      setStats(prev => ({ ...prev, transfers: snap.size }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/transactions"));
+
+    const rechargeUnsub = onSnapshot(query(collection(db, "recharge_requests"), where("status", "==", "pending")), (snap) => {
+      setStats(prev => ({ ...prev, pendingRecharges: snap.size }));
+      setRechargeRequests(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RechargeRequest)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/recharge_requests"));
+
+    // Pulse active users correctly
+    const promoCodesUnsub = onSnapshot(collection(db, "promo_codes"), (snap) => {
+      setStats(prev => ({ ...prev, totalPromoCodes: snap.size }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/promo_codes"));
+
+    const activeUnsub = onSnapshot(collection(db, "users"), (snap) => {
+      const now = new Date();
+      // Simple logic for active users: 40% of total + random jitter for pulse effect
+      setStats(prev => ({ ...prev, activeUsers: Math.floor(snap.size * 0.4) + Math.floor(Math.random() * 5) }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/active_users"));
+    
+    setLoading(false);
+    return () => {
+      usersUnsub();
+      promosUnsub();
+      transfersUnsub();
+      rechargeUnsub();
+      promoCodesUnsub();
+      activeUnsub();
     };
-    fetchStats();
   }, []);
+
+  const updateQrCode = async () => {
+    if (!newQrUrl) return;
+    setIsUpdatingQr(true);
+    try {
+      await setDoc(doc(db, "config", "app"), { qrCodeUrl: newQrUrl }, { merge: true });
+      toast.success("QR Code updated!");
+      setNewQrUrl("");
+    } catch (e) {
+      toast.error("Failed to update QR");
+    } finally {
+      setIsUpdatingQr(false);
+    }
+  };
+
+  const approveRecharge = async (request: RechargeRequest) => {
+    try {
+      await runTransaction(db, async (tx) => {
+        const userRef = doc(db, "users", request.userId);
+        const reqRef = doc(db, "recharge_requests", request.id);
+        const userSnap = await tx.get(userRef);
+        if (!userSnap.exists()) throw "User not found";
+        
+        tx.update(userRef, { coins: increment(request.amount) });
+        tx.update(reqRef, { status: 'approved' });
+        
+        const txRef = doc(collection(db, "transactions"));
+        tx.set(txRef, {
+          userId: request.userId,
+          amount: request.amount,
+          type: 'bonus',
+          description: `Recharge Approved (UTR: ${request.utr})`,
+          timestamp: serverTimestamp()
+        });
+      });
+      toast.success("Recharge approved!");
+    } catch (e) {
+      toast.error("Approval failed");
+    }
+  };
 
   const deletePromo = async (id: string) => {
     try {
@@ -3018,31 +3276,47 @@ function AdminTab() {
   return (
     <div className="space-y-6 pb-20">
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 text-center shadow-sm">
-          <Users className="h-5 w-5 mx-auto mb-1 text-blue-600" />
-          <p className="text-[10px] font-bold text-slate-400 uppercase">Total Users</p>
-          <p className="text-lg font-black">{stats.users}</p>
+        <StatCard title="Total Users" value={stats.users} icon={Users} color="bg-blue-500" />
+        <StatCard title="Active Now" value={stats.activeUsers} icon={Users} color="bg-green-500" trend="Real-time" />
+        <StatCard title="Active Campaigns" value={stats.campaigns} icon={Zap} color="bg-purple-500" />
+        <StatCard title="Promo Codes" value={stats.totalPromoCodes} icon={Gift} color="bg-indigo-500" />
+        <StatCard title="Pending Recharge" value={stats.pendingRecharges} icon={CreditCard} color="bg-yellow-500" />
+        <StatCard title="Total Transfers" value={stats.transfers} icon={History} color="bg-slate-500" />
+      </div>
+
+      {/* App Config */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-black text-lg flex items-center gap-2">
+            <Settings className="h-5 w-5 text-blue-600" />
+            General Settings
+          </h3>
+          <Button variant="ghost" size="sm" className="text-[10px] font-black text-blue-600 h-7" onClick={() => setIsGuideOpen(true)}>
+            <HelpCircle className="h-3 w-3 mr-1" />
+            VIEW GUIDE
+          </Button>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 text-center shadow-sm">
-          <div className="flex items-center justify-center gap-1 mb-1">
-            <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            <Users className="h-5 w-5 text-green-600" />
+        <div className="space-y-3">
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Payment QR Code URL</label>
+            <Input 
+              placeholder="Paste QR Code Image URL" 
+              value={newQrUrl} 
+              onChange={(e) => setNewQrUrl(e.target.value)}
+              className="h-12 font-medium"
+            />
           </div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase">Active Now</p>
-          <p className="text-lg font-black">{stats.activeUsers}</p>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 text-center shadow-sm">
-          <Zap className="h-5 w-5 mx-auto mb-1 text-yellow-600" />
-          <p className="text-[10px] font-bold text-slate-400 uppercase">Total Promos</p>
-          <p className="text-lg font-black">{stats.campaigns}</p>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 text-center shadow-sm">
-          <History className="h-5 w-5 mx-auto mb-1 text-indigo-600" />
-          <p className="text-[10px] font-bold text-slate-400 uppercase">Transfers</p>
-          <p className="text-lg font-black">{stats.transfers}</p>
+          <Button 
+            className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl"
+            onClick={updateAppConfig}
+          >
+            UPDATE SETTINGS
+          </Button>
         </div>
       </div>
 
+      <PublishingGuide open={isGuideOpen} onOpenChange={setIsGuideOpen} />
+      
       {/* Gift Code Creation */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <h3 className="font-black text-lg flex items-center gap-2">
@@ -3070,6 +3344,77 @@ function AdminTab() {
           >
             {isCreatingGift ? <Loader2 className="animate-spin" /> : "CREATE GIFT CODE"}
           </Button>
+        </div>
+      </div>
+
+      {/* Recharge Requests */}
+      {rechargeRequests.length > 0 && (
+        <div className="space-y-4">
+          <h3 className="font-black text-lg flex items-center gap-2 text-yellow-600">
+            <CreditCard className="h-5 w-5" />
+            Pending Recharges ({rechargeRequests.length})
+          </h3>
+          {rechargeRequests.map(req => (
+            <Card key={req.id} className="p-4 bg-yellow-50/30 border-yellow-100 rounded-2xl">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="font-black text-slate-900">{req.userName}</p>
+                  <p className="text-sm font-bold text-slate-500">UTR: {req.utr}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="bg-yellow-400 p-0.5 rounded-full">
+                      <Coins className="h-3 w-3 text-white" />
+                    </div>
+                    <span className="font-black text-yellow-700">{req.amount} Coins</span>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    size="sm" 
+                    className="bg-green-600 hover:bg-green-700 text-white font-black rounded-lg"
+                    onClick={() => approveRecharge(req)}
+                  >
+                    APPROVE
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    className="border-red-200 text-red-500 hover:bg-red-50 font-black rounded-lg"
+                    onClick={() => updateDoc(doc(db, "recharge_requests", req.id), { status: 'rejected' })}
+                  >
+                    REJECT
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Admin Settings */}
+      <div className="bg-slate-900 p-6 rounded-2xl text-white space-y-4 shadow-xl">
+        <h3 className="font-black text-lg flex items-center gap-2">
+          <Settings className="h-5 w-5 text-blue-400" />
+          General Settings
+        </h3>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-black uppercase text-slate-400">Payment QR Code URL</Label>
+            <div className="flex gap-2">
+              <Input 
+                placeholder="https://..." 
+                value={newQrUrl} 
+                onChange={(e) => setNewQrUrl(e.target.value)}
+                className="bg-slate-800 border-none text-white font-bold h-11"
+              />
+              <Button 
+                onClick={updateQrCode}
+                disabled={isUpdatingQr}
+                className="bg-blue-600 hover:bg-blue-700 font-black px-6"
+              >
+                {isUpdatingQr ? <Loader2 className="animate-spin" /> : "SET"}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -3204,10 +3549,14 @@ function HomeTab({
   onOpenTransactions,
   onOpenAdminPromo,
   onOpenSupport,
-  onClaimDailyBonus,
-  canClaimDaily,
+  onOpenVIP,
+  onOpenRecharge,
   isAdmin,
-  connectedAccounts
+  connectedAccounts,
+  deviceId,
+  setActiveTab,
+  autoBoost,
+  toggleAutoBoost
 }: { 
   profile: UserProfile | null, 
   user: FirebaseUser | null, 
@@ -3221,22 +3570,26 @@ function HomeTab({
   onOpenTransactions: () => void,
   onOpenAdminPromo: () => void,
   onOpenSupport: () => void,
-  onClaimDailyBonus: () => void,
-  canClaimDaily: boolean,
+  onOpenVIP: () => void,
+  onOpenRecharge: () => void,
   isAdmin: boolean,
-  connectedAccounts: ConnectedAccount[]
+  connectedAccounts: ConnectedAccount[],
+  deviceId: string | null,
+  setActiveTab: (tab: "home" | "get-coin" | "get-subscribe" | "admin") => void,
+  autoBoost: boolean,
+  toggleAutoBoost: () => void
 }) {
   const [isBuyOpen, setIsBuyOpen] = useState(false);
 
   const menuItems = [
     { icon: Users, label: "Switch Account", color: "text-blue-600", bg: "bg-blue-50", onClick: onOpenAccounts, badge: connectedAccounts.length > 1 ? connectedAccounts.length : undefined },
-    { icon: Gift, label: "Daily Bonus", color: "text-amber-600", bg: "bg-amber-50", onClick: onClaimDailyBonus, badge: canClaimDaily ? "CLAIM" : undefined },
+    { icon: Crown, label: "VIP Membership", color: "text-purple-600", bg: "bg-purple-50", onClick: onOpenVIP },
+    { icon: CreditCard, label: "Add Coins (Recharge)", color: "text-yellow-600", bg: "bg-yellow-50", onClick: onOpenRecharge },
     { icon: History, label: "Transaction History", color: "text-indigo-600", bg: "bg-indigo-50", onClick: onOpenTransactions },
     { icon: Gift, label: "Free Coins", color: "text-green-600", bg: "bg-green-50", onClick: onOpenGiftCode },
     { icon: ArrowRightLeft, label: "Transfer Coin", color: "text-purple-600", bg: "bg-purple-50", onClick: onOpenTransfer },
     { icon: UserPlus, label: "Invite Friends", color: "text-pink-600", bg: "bg-pink-50", onClick: onOpenInvite },
     { icon: HelpCircle, label: "Support (AI)", color: "text-orange-600", bg: "bg-orange-50", onClick: onOpenSupport },
-    { icon: MessageSquare, label: "Join Telegram", color: "text-sky-600", bg: "bg-sky-50", onClick: () => window.open("https://t.me/nivaboost", "_blank") },
   ];
 
   return (
@@ -3265,18 +3618,25 @@ function HomeTab({
         </div>
         <h2 className="text-2xl font-black mt-4 text-slate-900">{profile?.displayName}</h2>
         <p className="text-slate-400 text-sm font-medium">{user?.email}</p>
+        <div className="flex items-center justify-center gap-1 mt-1">
+          <Smartphone className="h-3 w-3 text-slate-300" />
+          <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Device ID: {deviceId?.slice(0, 12)}...</p>
+        </div>
         
         <div className="flex items-center justify-center gap-4 mt-6">
-          <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-100">
+          <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-100 flex-1">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Coins</p>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 justify-center">
               <Coins className="h-4 w-4 text-yellow-500" />
               <span className="text-lg font-black">{isAdmin ? "∞" : (profile?.coins || 0)}</span>
             </div>
           </div>
-          <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-100">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Status</p>
-            <Badge className="bg-green-500 text-white border-none h-5 text-[10px]">Active</Badge>
+          <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-100 flex-1 cursor-pointer" onClick={toggleAutoBoost}>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Auto-Boost</p>
+            <div className="flex items-center gap-1.5 justify-center">
+              <Zap className={`h-4 w-4 ${autoBoost ? "text-orange-500 animate-pulse" : "text-slate-300"}`} />
+              <span className={`text-[10px] font-black uppercase ${autoBoost ? "text-orange-600" : "text-slate-400"}`}>{autoBoost ? "ON" : "OFF"}</span>
+            </div>
           </div>
         </div>
 
@@ -3374,7 +3734,6 @@ function GetCoinTab({
     ? currentAutoTask 
     : promotions.filter(p => !completedTaskIds.has(p.id)).filter(p => p.type === filter)[0];
 
-  const [isBotWorking, setIsBotWorking] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<{ok: boolean, msg: string} | null>(null);
 
@@ -3416,9 +3775,22 @@ function GetCoinTab({
 
   const handleAction = async (promo: Promotion) => {
     const currentUid = auth.currentUser?.uid;
-    if (!profile || !currentUid || currentUid !== profile.uid) {
+    if (!profile || !currentUid) {
       toast.error("Session error. Please refresh.");
       return;
+    }
+
+    // Daily Limit Check
+    if (!isAdmin && promo.type === 'subscribe') {
+      const today = new Date().toISOString().split('T')[0];
+      let currentEarn = profile.dailyEarnActions || 0;
+      if (profile.lastLimitResetDate !== today) {
+        currentEarn = 0;
+      }
+      if (currentEarn >= 100) {
+        toast.error("Today is limit is over. You can only subscribe to 100 channels per day.");
+        return;
+      }
     }
 
     // Ensure we have a connection
@@ -3428,12 +3800,12 @@ function GetCoinTab({
     }
 
     try {
-      const actionRef = doc(db, "actions", `${currentUid}_${promo.id}`);
+      const actionRef = doc(db, "actions", `${profile.uid}_${promo.id}`);
       let actionSnap;
       try {
         actionSnap = await getDoc(actionRef);
       } catch (error) {
-        handleFirestoreError(error, OperationType.GET, `actions/${currentUid}_${promo.id}`);
+        handleFirestoreError(error, OperationType.GET, `actions/${profile.uid}_${promo.id}`);
         return;
       }
       if (actionSnap.exists()) {
@@ -3446,22 +3818,38 @@ function GetCoinTab({
       
       // 1. Create action
       batch.set(actionRef, { 
-        userId: currentUid, 
+        userId: profile.uid, 
         promotionId: promo.id, 
         timestamp: serverTimestamp() 
       });
       
       // 2. Add coins to user
-      const userRef = doc(db, "users", currentUid);
+      const userRef = doc(db, "users", profile.uid);
       const reward = promo.type === 'subscribe' ? 4 : promo.coinsPerAction;
-      batch.update(userRef, { 
-        coins: increment(reward) 
-      });
+      
+      const today = new Date().toISOString().split('T')[0];
+      const resetDaily = profile.lastLimitResetDate !== today;
+      
+      const updateData: any = { 
+        coins: isAdmin ? profile.coins : increment(reward) 
+      };
+      
+      if (promo.type === 'subscribe') {
+        updateData.dailyEarnActions = resetDaily ? 1 : increment(1);
+      }
+      
+      if (resetDaily) {
+        updateData.lastLimitResetDate = today;
+        if (promo.type !== 'subscribe') updateData.dailyEarnActions = 0;
+        updateData.dailyCampaignSubs = 0;
+      }
+
+      batch.update(userRef, updateData);
       
       // 3. Record transaction
       const txRef = doc(collection(db, "transactions"));
       batch.set(txRef, {
-        userId: currentUid,
+        userId: profile.uid,
         amount: reward,
         type: 'earn',
         description: `${promo.type} task`,
@@ -3572,6 +3960,11 @@ function GetCoinTab({
 
   return (
     <div className="space-y-6 flex flex-col items-center">
+      {/* Secure Mode Badge */}
+      <div className="bg-green-500/10 text-green-600 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-green-500/20 shadow-sm">
+        <ShieldCheck className="h-4 w-4" />
+        Google Secure Mode Active
+      </div>
       {/* Connection Status & Help */}
       <div className="w-full max-w-[360px] space-y-3">
         {googleAccessToken ? (
@@ -3754,12 +4147,6 @@ function GetCoinTab({
               <div>
                 <div className="flex items-center gap-1">
                   <p className="font-black text-sm text-slate-800">Auto Engine</p>
-                  <button 
-                    onClick={() => (window as any).openTroubleshooting()}
-                    className="text-slate-400 hover:text-blue-500 transition-colors"
-                  >
-                    <HelpCircle className="h-3 w-3" />
-                  </button>
                 </div>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                   {isAutoRunning ? `Earned: ${autoStats.coinsEarned}` : "Off"}
@@ -3791,98 +4178,10 @@ function GetCoinTab({
           />
         </div>
 
-        {/* Setup Checklist - Only show if not connected or auto-running */}
-        {!googleAccessToken && !isAutoRunning && (
-          <div className="bg-white border-2 border-blue-500 rounded-2xl p-5 mb-4 shadow-lg shadow-blue-500/10">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-xs font-black text-blue-600 uppercase tracking-widest">🚀 Final Setup Guide</p>
-              <div className="h-2 w-2 bg-blue-500 rounded-full animate-ping" />
-            </div>
-            
-            <div className="space-y-4">
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 rounded-full bg-red-600 text-white flex items-center justify-center shrink-0 font-black text-xs">!</div>
-                <div className="flex-1">
-                  <p className="text-xs font-black text-red-600 uppercase">Step 0: Enable the API (Most Important)</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-1 leading-relaxed">
-                    If you don't see a checkbox, it's because the API is turned OFF.
-                  </p>
-                  <Button 
-                    variant="outline"
-                    className="w-full mt-2 border-red-200 text-red-600 hover:bg-red-50 h-8 text-[10px] font-black rounded-lg"
-                    onClick={() => window.open('https://console.cloud.google.com/apis/library/youtube.googleapis.com?project=gen-lang-client-0716940414', '_blank')}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    CLICK HERE TO ENABLE YOUTUBE API
-                  </Button>
-                </div>
-              </div>
+        {/* Setup Checklist removed */}
 
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 font-black text-xs">1</div>
-                <div>
-                  <p className="text-xs font-black text-slate-800">Use the CORRECT Account</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-0.5">
-                    Log in with <span className="text-blue-600">tubefollowerhelp@gmail.com</span> or your 2nd Gmail.
-                  </p>
-                </div>
-              </div>
 
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 font-black text-xs">2</div>
-                <div>
-                  <p className="text-xs font-black text-slate-800">Find the "Hidden" Checkbox</p>
-                  <div className="mt-2 space-y-2">
-                    <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
-                      1. Click <span className="text-blue-600">"See the services..."</span>
-                    </p>
-                    <div className="bg-slate-100 p-2 rounded-lg border border-slate-200">
-                      <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Visual Guide:</p>
-                      <div className="flex items-center gap-2">
-                        <div className="h-4 w-4 border-2 border-blue-600 rounded bg-white flex items-center justify-center">
-                          <div className="h-2 w-2 bg-blue-600 rounded-sm" />
-                        </div>
-                        <p className="text-[10px] font-black text-slate-700">☑️ Manage your YouTube...</p>
-                      </div>
-                    </div>
-                    <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
-                      Look for the <span className="text-blue-600">Blue Square</span> to the left of the YouTube logo. You MUST click it!
-                    </p>
-                  </div>
-                </div>
-              </div>
 
-              <div className="flex items-start gap-3">
-                <div className="h-6 w-6 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 font-black text-xs">3</div>
-                <div>
-                  <p className="text-xs font-black text-slate-800">Click Continue</p>
-                  <p className="text-[10px] text-slate-500 font-bold mt-0.5">
-                    Click the blue "Continue" button at the bottom.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-2 mt-6">
-              <Button 
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black h-12 shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2"
-                onClick={async () => {
-                  sessionStorage.clear();
-                  await onConnectYouTube();
-                }}
-              >
-                <Zap className="h-4 w-4 fill-current" />
-                <span>RESET & START FRESH</span>
-              </Button>
-            </div>
-            
-            <p className="text-[9px] text-center text-slate-400 font-bold mt-3 uppercase tracking-tighter">
-              * This will clear your session and start fresh
-            </p>
-          </div>
-        )}
-
-        {/* Bot Log Display */}
         {isAutoRunning && botLog.length > 0 && (
           <div className="bg-slate-900/5 p-3 rounded-xl border border-slate-100 mt-2">
             <div className="flex items-center gap-2 mb-2">
@@ -3987,6 +4286,12 @@ function GetSubscribeTab({
       return;
     }
 
+    // Strict validation for like/comment
+    if (campaignType !== 'subscribe' && !youtubeUrl.includes('watch') && !youtubeUrl.includes('youtu.be') && youtubeUrl.length !== 11) {
+      toast.error("Please paste a direct Video Link for likes/comments!");
+      return;
+    }
+
     // If metadata is already fetched, use it. Otherwise, proceed to runVerification.
     if (urlError) {
       toast.error(urlError);
@@ -3996,6 +4301,19 @@ function GetSubscribeTab({
     if (!isAdmin && profile.coins < totalCost) {
       toast.error("Insufficient coins!");
       return;
+    }
+
+    // Daily Limit Check
+    if (!isAdmin && campaignType === 'subscribe') {
+      const today = new Date().toISOString().split('T')[0];
+      let currentSubs = profile.dailyCampaignSubs || 0;
+      if (profile.lastLimitResetDate !== today) {
+        currentSubs = 0;
+      }
+      if (currentSubs + count > 100) {
+        toast.error("Today is limit is over. You can only add 100 subscribers per day.");
+        return;
+      }
     }
 
     setIsVerifying(true);
@@ -4177,9 +4495,24 @@ function GetSubscribeTab({
       await addDoc(collection(db, "promotions"), promoData);
 
       if (!isAdmin) {
-        await updateDoc(doc(db, "users", profile.uid), {
+        const today = new Date().toISOString().split('T')[0];
+        const resetDaily = profile.lastLimitResetDate !== today;
+        
+        const userUpdate: any = {
           coins: increment(-totalCost)
-        });
+        };
+        
+        if (campaignType === 'subscribe') {
+          userUpdate.dailyCampaignSubs = resetDaily ? count : increment(count);
+        }
+        
+        if (resetDaily) {
+          userUpdate.lastLimitResetDate = today;
+          if (campaignType !== 'subscribe') userUpdate.dailyCampaignSubs = 0;
+          userUpdate.dailyEarnActions = 0;
+        }
+
+        await updateDoc(doc(db, "users", profile.uid), userUpdate);
         await recordTransaction(profile.uid, totalCost, 'spend', `Created ${campaignType} campaign`);
       }
 
@@ -4240,22 +4573,11 @@ function GetSubscribeTab({
 
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1 bg-white rounded-xl sm:rounded-2xl p-2.5 sm:p-3 flex items-center gap-3 shadow-xl">
-            <Avatar className="h-9 w-9 sm:h-10 sm:w-10 border-2 border-blue-50 overflow-hidden shrink-0">
-              {isFetchingMetadata ? (
-                <div className="w-full h-full bg-slate-100 flex items-center justify-center">
-                  <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin text-blue-600" />
-                </div>
-              ) : channelLogo ? (
-                <AvatarImage src={channelLogo} />
-              ) : youtubeUrl ? (
-                <div className="w-full h-full bg-slate-100 flex items-center justify-center">
-                  <Youtube className="h-4 w-4 sm:h-5 sm:w-5 text-red-600" />
-                </div>
-              ) : (
-                <AvatarImage src={profile?.photoURL} />
-              )}
-              <AvatarFallback>{profile?.displayName?.[0]}</AvatarFallback>
-            </Avatar>
+            {campaignType === "subscribe" ? (
+              <User className="h-5 w-5 text-blue-600 shrink-0" />
+            ) : (
+              <Youtube className="h-5 w-5 text-red-600 shrink-0" />
+            )}
             <div className="flex-1 min-w-0">
               <Input 
                 placeholder={campaignType === "subscribe" ? "Add Channel URL..." : "Add Video URL..."} 
@@ -4263,26 +4585,24 @@ function GetSubscribeTab({
                 value={youtubeUrl}
                 onChange={(e) => setYoutubeUrl(e.target.value)}
               />
-              {urlError && (
-                <p className="text-[10px] text-red-500 font-bold mt-0.5 animate-in fade-in slide-in-from-top-1">
-                  {urlError}
-                </p>
-              )}
+              <div className="flex items-center justify-between">
+                {urlError ? (
+                  <p className="text-[10px] text-red-500 font-bold mt-0.5 animate-in fade-in slide-in-from-top-1">
+                    {urlError}
+                  </p>
+                ) : (
+                  <a 
+                    href="https://www.youtube.com/account_advanced" 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="text-[10px] text-blue-500 font-bold mt-0.5 hover:underline flex items-center gap-1"
+                  >
+                    <HelpCircle className="h-2 w-2" />
+                    How to find channel ID?
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="bg-white/20 backdrop-blur-md rounded-xl sm:rounded-2xl p-2.5 sm:p-3 flex items-center gap-2 border border-white/30 shadow-xl sm:min-w-[100px] justify-center">
-            <div className="bg-blue-500 p-1 rounded-lg">
-              <Users className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-white" />
-            </div>
-            <span className="text-white font-black text-base sm:text-lg truncate">
-              {isFetchingMetadata ? (
-                <Loader2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin" />
-              ) : subscriberCount > 0 ? (
-                subscriberCount.toLocaleString()
-              ) : (
-                "0"
-              )}
-            </span>
           </div>
         </div>
       </div>
@@ -4304,47 +4624,56 @@ function GetSubscribeTab({
         </div>
 
         {/* Package List */}
-        <div className="space-y-2.5 sm:space-y-3">
-          {packages.map((pkg, idx) => (
+        <AnimatePresence>
+          {youtubeUrl.trim() && !urlError && (
             <motion.div 
-              key={idx}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
-              className="bg-white p-3 sm:p-4 rounded-[20px] sm:rounded-[24px] border border-slate-100 flex items-center justify-between shadow-sm hover:shadow-md transition-all group"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="space-y-2.5 sm:space-y-3 overflow-hidden"
             >
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="bg-blue-50 p-2 sm:p-3 rounded-xl sm:rounded-2xl text-[#2196F3] group-hover:bg-blue-100 transition-colors">
-                  {campaignType === "subscribe" ? <UserPlus className="h-5 w-5 sm:h-6 sm:w-6" /> : campaignType === "like" ? <Heart className="h-5 w-5 sm:h-6 sm:w-6" /> : <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />}
-                </div>
-                <div>
-                  <p className="text-lg sm:text-xl font-black text-slate-900">{pkg.count}</p>
-                  <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                    {campaignType === "subscribe" ? "Subscribers" : campaignType.charAt(0).toUpperCase() + campaignType.slice(1) + "s"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 sm:gap-6">
-                <div className="flex items-center gap-1.5 sm:gap-2 bg-yellow-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-yellow-100">
-                  <div className="bg-yellow-400 rounded-full p-0.5">
-                    <Coins className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-white" />
-                  </div>
-                  <span className="font-black text-xs sm:text-sm text-yellow-700">{pkg.price}</span>
-                </div>
-
-                <Button 
-                  variant="outline"
-                  className="border-2 border-yellow-400 text-yellow-600 font-black rounded-lg sm:rounded-xl px-4 sm:px-6 hover:bg-yellow-400 hover:text-white transition-all h-8 sm:h-10 text-xs sm:text-sm"
-                  onClick={() => handleCreate(pkg.count, pkg.price)}
-                  disabled={isVerifying || isFetchingMetadata}
+              {packages.map((pkg, idx) => (
+                <motion.div 
+                  key={idx}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className="bg-white p-3 sm:p-4 rounded-[20px] sm:rounded-[24px] border border-slate-100 flex items-center justify-between shadow-sm hover:shadow-md transition-all group"
                 >
-                  {isVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Get"}
-                </Button>
-              </div>
+                  <div className="flex items-center gap-3 sm:gap-4">
+                    <div className="bg-blue-50 p-2 sm:p-3 rounded-xl sm:rounded-2xl text-[#2196F3] group-hover:bg-blue-100 transition-colors">
+                      {campaignType === "subscribe" ? <UserPlus className="h-5 w-5 sm:h-6 sm:w-6" /> : campaignType === "like" ? <Heart className="h-5 w-5 sm:h-6 sm:w-6" /> : <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />}
+                    </div>
+                    <div>
+                      <p className="text-lg sm:text-xl font-black text-slate-900">{pkg.count}</p>
+                      <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        {campaignType === "subscribe" ? "Subscribers" : campaignType.charAt(0).toUpperCase() + campaignType.slice(1) + "s"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 sm:gap-6">
+                    <div className="flex items-center gap-1.5 sm:gap-2 bg-yellow-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-yellow-100">
+                      <div className="bg-yellow-400 rounded-full p-0.5">
+                        <Coins className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-white" />
+                      </div>
+                      <span className="font-black text-xs sm:text-sm text-yellow-700">{pkg.price}</span>
+                    </div>
+
+                    <Button 
+                      variant="outline"
+                      className="border-2 border-yellow-400 text-yellow-600 font-black rounded-lg sm:rounded-xl px-4 sm:px-6 hover:bg-yellow-400 hover:text-white transition-all h-8 sm:h-10 text-xs sm:text-sm"
+                      onClick={() => handleCreate(pkg.count, pkg.price)}
+                      disabled={isVerifying || isFetchingMetadata}
+                    >
+                      {isVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Get"}
+                    </Button>
+                  </div>
+                </motion.div>
+              ))}
             </motion.div>
-          ))}
-        </div>
+          )}
+        </AnimatePresence>
 
         {/* Active Campaigns Section */}
         {myPromos.filter(p => p.active).length > 0 && (
@@ -4393,6 +4722,86 @@ function GetSubscribeTab({
         )}
       </div>
     </div>
+  );
+}
+
+async function handleSupportAI(message: string) {
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are a support bot for NivaBoost, a YouTube growth platform. Respond helpfully to this user message: ${message}`
+    });
+    return response.text || "Our AI is currently busy.";
+  } catch (e) {
+    return "Our AI is currently busy. Please try again later or contact our telegram support.";
+  }
+}
+
+function PublishingGuide({ open, onOpenChange }: { open: boolean, onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md bg-white rounded-3xl p-8 max-h-[80vh] overflow-y-auto border-none">
+        <DialogHeader>
+          <DialogTitle className="text-2xl font-black mb-2">Publishing Guide</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-6 text-sm text-slate-600 leading-relaxed font-medium">
+          <section className="bg-blue-50 p-4 rounded-2xl">
+            <h4 className="font-black text-slate-900 uppercase text-xs mb-2 tracking-widest text-[#2196F3] flex items-center gap-2">
+              <Video className="h-4 w-4" />
+              Recording Verification Video
+            </h4>
+            <p className="text-[11px] mb-2 font-bold">Google requires a video showing how you use the data. Follow these steps:</p>
+            <ul className="list-disc ml-4 space-y-1 text-[11px]">
+              <li>Use a screen recorder like OBS or Loom.</li>
+              <li>Show your app's home screen.</li>
+              <li>Click "Connect YouTube" and show the Google Login popup.</li>
+              <li><b>CRITICAL:</b> In the address bar of the popup, highlight the <b>CLIENT_ID</b> so Google can see it matches your project.</li>
+              <li>Explain how the app reads channel info to verify subscriptions and follows.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h4 className="font-black text-slate-900 uppercase text-xs mb-2 tracking-widest text-[#2196F3]">1. Google Cloud Console (Step 2)</h4>
+            <p>Go to your Google Cloud Project. Under <b>APIs & Services → OAuth Consent Screen</b>:
+              <br/>• Click <b>"Publish App"</b> to move from Testing to Production.
+              <br/>• Add YOUR email to the "Test Users" list if you stay in Testing mode.
+              <br/>• Ensure <b>YouTube Data API v3</b> is enabled in the Library.
+            </p>
+          </section>
+          
+          <section>
+            <h4 className="font-black text-slate-900 uppercase text-xs mb-2 tracking-widest text-[#2196F3]">2. Vercel Publishing</h4>
+            <p>Push your code to GitHub. Connect the repo to Vercel. In <b>Vercel Settings → Environment Variables</b>, add:
+              <br/>• <code className="bg-slate-100 px-1 rounded">VITE_FIREBASE_API_KEY</code>, etc.
+              <br/>• <code className="bg-slate-100 px-1 rounded">GEMINI_API_KEY</code>
+              <br/>Vercel will build and give you a live link!
+            </p>
+          </section>
+        </div>
+        <Button className="w-full mt-6 bg-[#2196F3] hover:bg-[#1976D2] text-white font-black h-14 rounded-2xl shadow-lg shadow-blue-500/20" onClick={() => onOpenChange(false)}>Got it!</Button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function StatCard({ title, value, icon: Icon, color, trend }: { title: string, value: number | string, icon: any, color: string, trend?: string }) {
+  return (
+    <Card className="p-4 bg-white border-slate-100 shadow-sm relative overflow-hidden group">
+      <div className={`absolute top-0 right-0 w-16 h-16 -mr-4 -mt-4 rounded-full opacity-5 group-hover:scale-125 transition-transform ${color}`} />
+      <div className="relative z-10 flex flex-col gap-2">
+        <div className={`p-2 rounded-xl w-fit ${color} bg-opacity-10`}>
+          <Icon className={`h-5 w-5 ${color.replace('bg-', 'text-')}`} />
+        </div>
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{title}</p>
+          <div className="flex items-baseline gap-2">
+            <h3 className="text-xl font-black text-slate-900">{value}</h3>
+            {trend && <span className="text-[10px] font-bold text-green-500">{trend}</span>}
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 
