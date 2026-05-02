@@ -511,6 +511,21 @@ function MainApp() {
   const APP_VERSION = 1.1; // Current App Version
 
   useEffect(() => {
+    if (!user) return;
+    const userRef = doc(db, "users", user.uid);
+    const updateActivity = async () => {
+      try {
+        await updateDoc(userRef, { lastActive: serverTimestamp() });
+      } catch (e) {
+        console.error("Activity update error:", e);
+      }
+    };
+    updateActivity();
+    const interval = setInterval(updateActivity, 120000); // 2 minutes
+    return () => clearInterval(interval);
+  }, [user]);
+
+  useEffect(() => {
     // Inject Google Verification Tag as backup
     const meta = document.createElement('meta');
     meta.name = "google-site-verification";
@@ -698,10 +713,19 @@ function MainApp() {
           if (cleanChannelId) {
             const ucMatch = cleanChannelId.match(/UC[a-zA-Z0-9_-]{22}/);
             if (ucMatch) cleanChannelId = ucMatch[0];
+          } else {
+            // Attempt extraction from URL if not in JSON
+            const ucMatch = trimmedUrl.match(/UC[a-zA-Z0-9_-]{22}/);
+            if (ucMatch) cleanChannelId = ucMatch[0];
           }
+
           let cleanVideoId = result.videoId;
           if (cleanVideoId) {
             const vMatch = cleanVideoId.match(/[a-zA-Z0-9_-]{11}/);
+            if (vMatch) cleanVideoId = vMatch[0];
+          } else {
+            // Attempt extraction from URL
+            const vMatch = trimmedUrl.match(/[a-zA-Z0-9_-]{11}/);
             if (vMatch) cleanVideoId = vMatch[0];
           }
           
@@ -713,12 +737,16 @@ function MainApp() {
           });
           setIsFetchingMetadata(false);
         } catch (e) {
-          if (retries > 0) {
-            console.warn(`Retrying Gemini call... (${retries} left)`, e);
-            await new Promise(r => setTimeout(r, 1000));
-            return fetchMetadata(retries - 1);
-          }
           console.error("Error fetching YouTube metadata:", e);
+          // Fallback with basic extraction
+          const ucMatch = trimmedUrl.match(/UC[a-zA-Z0-9_-]{22}/);
+          const vMatch = trimmedUrl.match(/[a-zA-Z0-9_-]{11}/);
+          setMetadata({
+            title: isChannel ? "YouTube Channel" : "YouTube Video",
+            thumbnail: "https://i.ibb.co/vzYyX0W/qr-placeholder.png",
+            channelId: ucMatch ? ucMatch[0] : null,
+            videoId: vMatch ? vMatch[0] : null
+          } as any);
           setIsFetchingMetadata(false);
         }
       };
@@ -3160,7 +3188,7 @@ function AdminTab() {
       setStats(prev => ({ ...prev, users: snap.size }));
     }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/users"));
 
-    const promosUnsub = onSnapshot(collection(db, "promotions"), (snap) => {
+    const promosUnsub = onSnapshot(query(collection(db, "promotions"), where("active", "==", true)), (snap) => {
       setStats(prev => ({ ...prev, campaigns: snap.size }));
       setAllPromos(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Promotion)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/promotions"));
@@ -3179,10 +3207,8 @@ function AdminTab() {
       setStats(prev => ({ ...prev, totalPromoCodes: snap.size }));
     }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/promo_codes"));
 
-    const activeUnsub = onSnapshot(collection(db, "users"), (snap) => {
-      const now = new Date();
-      // Simple logic for active users: 40% of total + random jitter for pulse effect
-      setStats(prev => ({ ...prev, activeUsers: Math.floor(snap.size * 0.4) + Math.floor(Math.random() * 5) }));
+    const activeUnsub = onSnapshot(query(collection(db, "users"), where("lastActive", ">=", new Date(Date.now() - 5 * 60 * 1000))), (snap) => {
+      setStats(prev => ({ ...prev, activeUsers: snap.size }));
     }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/active_users"));
     
     setLoading(false);
@@ -3582,14 +3608,6 @@ function HomeTab({
   const [isBuyOpen, setIsBuyOpen] = useState(false);
 
   const menuItems = [
-    { 
-      icon: Youtube, 
-      label: googleAccessToken ? "YouTube Connected" : "Connect YouTube Account", 
-      color: googleAccessToken ? "text-green-600" : "text-red-600", 
-      bg: googleAccessToken ? "bg-green-50" : "bg-red-50", 
-      onClick: googleAccessToken ? () => toast.success("YouTube is already connected!") : onConnectYouTube,
-      badge: googleAccessToken ? "ACTIVE" : undefined
-    },
     { icon: Users, label: "Switch Account", color: "text-blue-600", bg: "bg-blue-50", onClick: onOpenAccounts, badge: connectedAccounts.length > 1 ? connectedAccounts.length : undefined },
     { icon: Crown, label: "VIP Membership", color: "text-purple-600", bg: "bg-purple-50", onClick: onOpenVIP },
     { icon: CreditCard, label: "Add Coins (Recharge)", color: "text-yellow-600", bg: "bg-yellow-50", onClick: onOpenRecharge },
@@ -3977,68 +3995,14 @@ function GetCoinTab({
 
   return (
     <div className="space-y-6 flex flex-col items-center">
-      {/* Secure Mode Badge */}
-      <div className="bg-green-500/10 text-green-600 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-green-500/20 shadow-sm">
-        <ShieldCheck className="h-4 w-4" />
-        Google Secure Mode Active
-      </div>
-      {/* Connection Status & Help */}
-      <div className="w-full max-w-[360px] space-y-3">
-        {googleAccessToken ? (
-          <div className={`p-4 rounded-2xl border-2 flex items-center justify-between shadow-sm ${connectionStatus?.ok ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"}`}>
-            <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-xl ${connectionStatus?.ok ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"}`}>
-                {isVerifying ? <Loader2 className="h-5 w-5 animate-spin" /> : connectionStatus?.ok ? <CheckCircle2 className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
-              </div>
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">YouTube Status</p>
-                <p className={`text-xs font-black ${connectionStatus?.ok ? "text-green-700" : "text-red-700"}`}>
-                  {isVerifying ? "Verifying..." : connectionStatus?.msg || "Checking..."}
-                </p>
-              </div>
-            </div>
-            <Button 
-              size="sm" 
-              variant="ghost" 
-              className="h-8 text-[10px] font-black uppercase tracking-tighter text-slate-500 hover:bg-white/50"
-              onClick={() => {
-                sessionStorage.clear();
-                window.location.reload();
-              }}
-            >
-              Reset
-            </Button>
-          </div>
-        ) : (
-          <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-2xl flex items-center justify-between shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="bg-blue-100 p-2 rounded-xl text-blue-600">
-                <Info className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-blue-400">Setup Required</p>
-                <p className="text-xs font-black text-blue-700 text-left">Connect YouTube to start earning</p>
-              </div>
-            </div>
-            <Button 
-              size="sm" 
-              className="bg-blue-600 hover:bg-blue-700 text-white h-8 text-[10px] font-black rounded-lg"
-              onClick={onConnectYouTube}
-            >
-              Connect
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Penalty Header */}
+      {/* Anti-Cheat Mode Badge */}
       <div className="w-full max-w-[360px] bg-red-50 border border-red-100 p-3 rounded-xl flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 text-red-600" />
-          <span className="text-[10px] font-black text-red-700 uppercase tracking-widest">Penalty Header</span>
+          <ShieldCheck className="h-4 w-4 text-red-600" />
+          <span className="text-[10px] font-black text-red-700 uppercase tracking-widest">Anti-Cheat Mode</span>
         </div>
-        <div className="flex items-center gap-1 bg-red-600 px-2 py-0.5 rounded-lg">
-          <span className="text-[10px] font-black text-white">-16 Coins</span>
+        <div className="flex items-center gap-1 bg-red-600 px-2 py-0.5 rounded-lg shadow-sm">
+          <span className="text-[10px] font-black text-white">Active</span>
         </div>
       </div>
 
@@ -4502,7 +4466,7 @@ function GetSubscribeTab({
         videoId: finalVideoId || null,
         title: title,
         thumbnail: thumbnail,
-        coinsPerAction: totalCost / count,
+        coinsPerAction: isAdmin ? 4 : (totalCost / count),
         totalActions: count,
         completedActions: 0,
         active: true,
@@ -4722,10 +4686,10 @@ function GetSubscribeTab({
                       size="icon" 
                       className="text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg sm:rounded-xl h-8 w-8 sm:h-10 sm:w-10"
                       onClick={() => {
-                        if (isAdmin) {
+                        if (isAdmin || promo.userId === profile?.uid) {
                           cancelCampaign(promo);
                         } else {
-                          toast.error("Only admins can delete campaigns.");
+                          toast.error("You can only delete your own campaigns.");
                         }
                       }}
                     >
