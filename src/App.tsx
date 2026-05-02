@@ -81,6 +81,7 @@ interface UserProfile {
   dailyCampaignSubs?: number;
   dailyEarnActions?: number;
   lastLimitResetDate?: string; // YYYY-MM-DD
+  isVIP?: boolean;
   // New: UTR for payments
   utrCodes?: string[];
 }
@@ -483,6 +484,15 @@ function MainApp() {
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deviceId, setDeviceId] = useState<string | null>(localStorage.getItem('device_id'));
+
+  useEffect(() => {
+    if (!deviceId) {
+      const newId = 'dev_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+      localStorage.setItem('device_id', newId);
+      setDeviceId(newId);
+    }
+  }, [deviceId]);
 
   const [activeTab, setActiveTab] = useState<"home" | "get-coin" | "get-subscribe" | "admin">("home");
   const [filter, setFilter] = useState<"subscribe" | "like" | "comment">("subscribe");
@@ -855,7 +865,8 @@ function MainApp() {
     const saved = localStorage.getItem('connected_accounts');
     if (saved) {
       try {
-        setConnectedAccounts(JSON.parse(saved));
+        const parsed = JSON.parse(saved) as ConnectedAccount[];
+        setConnectedAccounts(parsed.sort((a, b) => (b.coins || 0) - (a.coins || 0)));
       } catch (e) {
         console.error("Failed to parse connected accounts", e);
       }
@@ -880,6 +891,8 @@ function MainApp() {
         } else {
           newList = [...prev, currentAcc];
         }
+        // Sort by coins descending
+        newList.sort((a, b) => (b.coins || 0) - (a.coins || 0));
         localStorage.setItem('connected_accounts', JSON.stringify(newList));
         return newList;
       });
@@ -888,42 +901,49 @@ function MainApp() {
 
   useEffect(() => {
     const fetchAllCoins = async () => {
-      if (!user || connectedAccounts.length <= 1) return;
+      if (!user) return;
       
-      let total = 0;
+      const currentCoins = profile?.coins || 0;
+      let total = currentCoins;
+      
       const updatedAccounts = await Promise.all(connectedAccounts.map(async (acc) => {
         if (acc.uid === user.uid) {
-          const currentCoins = profile?.coins || 0;
-          total += currentCoins;
           return { ...acc, coins: currentCoins };
         }
+        // If device-linked coins are used, other accounts on the same device 
+        // will likely see the same coins. However, if they were from different devices,
+        // we might want to check their specific coins.
+        // For now, we assume acc.uid is the fallback for older profiles.
         try {
           const snap = await getDoc(doc(db, "users", acc.uid));
           if (snap.exists()) {
             const data = snap.data() as UserProfile;
-            total += data.coins;
+            // Summing might be wrong if they share profile, but typically 
+            // switching accounts would show the specific uid's coins if not using deviceId.
+            // If they are on the SAME device, profile.coins already covers it.
+            // We'll only add if the UID is different and likely a different profile.
+            if (acc.uid !== deviceId) {
+               total += data.coins || 0;
+            }
             return { ...acc, coins: data.coins };
           }
         } catch (e) {
-          // Silently handle permission issues for other accounts in the list
-          // This can happen if the user has accounts that they haven't logged into recently
-          // or if the security rules are restrictive.
           if (!(e instanceof Error && e.message.includes("permission"))) {
             console.error(`Failed to fetch coins for ${acc.uid}`, e);
           }
-          total += acc.coins || 0;
         }
         return acc;
       }));
       
       setTotalCoins(total);
-      setConnectedAccounts(updatedAccounts);
+      const sorted = updatedAccounts.sort((a, b) => (b.coins || 0) - (a.coins || 0));
+      setConnectedAccounts(sorted);
     };
 
     const interval = setInterval(fetchAllCoins, 30000); // Sync every 30s
     fetchAllCoins();
     return () => clearInterval(interval);
-  }, [user?.uid, connectedAccounts.length, profile?.coins]);
+  }, [user?.uid, connectedAccounts.length, profile?.coins, deviceId]);
 
   // Fetch referral count
   useEffect(() => {
@@ -1429,15 +1449,6 @@ function MainApp() {
     return () => clearInterval(interval);
   }, [profile?.uid, googleAccessToken, completedTaskIds.size]);
 
-  const [deviceId, setDeviceId] = useState<string | null>(localStorage.getItem('device_id'));
-
-  useEffect(() => {
-    if (!deviceId) {
-      const newId = 'dev_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-      localStorage.setItem('device_id', newId);
-      setDeviceId(newId);
-    }
-  }, [deviceId]);
 
   // Auth Listener updated to link device to user
   useEffect(() => {
@@ -1743,6 +1754,8 @@ function MainApp() {
   const removeAccount = (uid: string) => {
     setConnectedAccounts(prev => {
       const newList = prev.filter(a => a.uid !== uid);
+      // Ensure sorted order maintained
+      newList.sort((a, b) => (b.coins || 0) - (a.coins || 0));
       localStorage.setItem('connected_accounts', JSON.stringify(newList));
       return newList;
     });
@@ -1756,6 +1769,10 @@ function MainApp() {
     if (user) {
       sessionStorage.removeItem(`google_access_token_${user.uid}`);
     }
+    // Clear all accounts on sign out as requested
+    setConnectedAccounts([]);
+    localStorage.removeItem('connected_accounts');
+    
     await signOut(auth);
     toast.success("Logged out successfully");
   };
@@ -2255,7 +2272,7 @@ function MainApp() {
             <Coins className="h-5 w-5 text-white" />
           </div>
           <span className="text-xl font-black text-slate-800 tracking-tight">
-            {isAdmin ? "∞" : (profile?.coins || 0)}
+            {isAdmin ? "∞" : (totalCoins || profile?.coins || 0)}
           </span>
         </div>
 
@@ -2566,6 +2583,7 @@ function MainApp() {
                 isFetchingMetadata={isFetchingMetadata}
                 setIsFetchingMetadata={setIsFetchingMetadata}
                 addBotLog={addBotLog}
+                totalCoins={totalCoins}
               />
             )}
             {activeTab === "admin" && isAdmin && (
@@ -2821,83 +2839,74 @@ function MainApp() {
               <Users className="h-8 w-8 text-blue-500" />
               Switch Account
             </DialogTitle>
+            <div className="mt-4 flex items-center gap-2 bg-white/10 w-fit px-4 py-2 rounded-2xl border border-white/10">
+              <Coins className="h-4 w-4 text-yellow-400" />
+              <span className="text-sm font-black text-white">Total: {totalCoins} Coins</span>
+            </div>
             <p className="text-slate-400 font-medium mt-2">Tap an account to switch instantly</p>
           </div>
           
           <div className="p-8 space-y-6 max-h-[60vh] overflow-y-auto">
-            {/* Active Account */}
+            {/* All Accounts */}
             <div className="space-y-3">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Active Now</p>
-              <div className="bg-blue-50 p-5 rounded-3xl border-2 border-blue-200 flex items-center gap-4 relative shadow-sm">
-                <div className="absolute top-4 right-4">
-                  <div className="h-3 w-3 bg-green-500 rounded-full animate-pulse shadow-sm shadow-green-500/50" />
-                </div>
-                <Avatar className="h-14 w-14 border-4 border-white shadow-md">
-                  <AvatarImage src={profile?.photoURL} />
-                  <AvatarFallback className="bg-blue-100 text-blue-600 font-black">{profile?.displayName?.[0]}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <p className="font-black text-slate-900 text-lg truncate">{profile?.displayName}</p>
-                  <p className="text-xs font-bold text-slate-500 truncate">{user?.email}</p>
-                </div>
-                <div className="bg-white px-4 py-1.5 rounded-2xl shadow-sm border border-blue-100">
-                  <div className="flex items-center gap-1.5">
-                    <Coins className="h-4 w-4 text-yellow-500" />
-                    <span className="text-sm font-black text-slate-800">{profile?.coins}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Other Accounts */}
-            {connectedAccounts.length > 1 && (
-              <div className="space-y-3">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Switch To</p>
-                <div className="space-y-3">
-                  {connectedAccounts.filter(a => a.uid !== user?.uid).map(acc => (
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Your Accounts</p>
+              <div className="space-y-4">
+                {connectedAccounts.map(acc => {
+                  const isActive = acc.uid === user?.uid;
+                  return (
                     <div 
                       key={acc.uid} 
-                      className="bg-white p-5 rounded-3xl border border-slate-100 flex items-center gap-4 relative group hover:border-blue-300 hover:bg-slate-50/50 transition-all cursor-pointer shadow-sm"
-                      onClick={() => handleLogin(acc.email)}
+                      className={`p-5 rounded-3xl border flex items-center gap-4 relative group transition-all cursor-pointer shadow-sm ${isActive ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100 hover:border-blue-300 hover:bg-slate-50/50'}`}
+                      onClick={() => !isActive && handleLogin(acc.email)}
                     >
-                      <Avatar className="h-14 w-14 border-2 border-white shadow-sm group-hover:scale-105 transition-transform">
+                      {isActive && (
+                        <div className="absolute top-4 right-4">
+                          <div className="h-3 w-3 bg-green-500 rounded-full animate-pulse shadow-sm shadow-green-500/50" />
+                        </div>
+                      )}
+                      <Avatar className={`h-14 w-14 border-4 border-white shadow-md ${isActive ? '' : 'group-hover:scale-105 transition-transform'}`}>
                         <AvatarImage src={acc.photoURL} />
-                        <AvatarFallback className="bg-slate-100 text-slate-600 font-black">{acc.displayName?.[0]}</AvatarFallback>
+                        <AvatarFallback className={`${isActive ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-600'} font-black text-xl`}>{acc.displayName?.[0]}</AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0">
-                        <p className="font-black text-slate-800 text-lg truncate">{acc.displayName}</p>
-                        <p className="text-xs font-bold text-slate-400 truncate">{acc.email}</p>
+                        <p className={`font-black text-lg truncate ${isActive ? 'text-slate-900' : 'text-slate-800'}`}>{acc.displayName}</p>
+                        <p className="text-xs font-bold text-slate-500 truncate">{acc.email}</p>
                       </div>
                       <div className="flex flex-col items-end gap-2">
-                        <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-xl">
-                          <Coins className="h-3.5 w-3.5 text-yellow-500" />
-                          <span className="text-xs font-black text-slate-700">{acc.coins || 0}</span>
+                        <div className={`flex items-center gap-1.5 px-3 py-1 rounded-xl ${isActive ? 'bg-white shadow-sm border border-blue-100' : 'bg-slate-100'}`}>
+                          <Coins className="h-4 w-4 text-yellow-500" />
+                          <span className="text-sm font-black text-slate-800">{acc.coins || 0}</span>
                         </div>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex gap-1">
                           <Button 
                             size="icon" 
                             variant="ghost" 
-                            className="h-8 w-8 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50"
+                            className="h-9 w-9 rounded-xl text-red-400 hover:text-red-600 hover:bg-red-50 bg-slate-50/50"
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (isActive) {
+                                handleLogout();
+                              }
                               removeAccount(acc.uid);
                             }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                          <Button 
-                            size="sm" 
-                            className="h-8 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] uppercase tracking-widest px-3"
-                          >
-                            Switch
-                          </Button>
+                          {!isActive && (
+                            <Button 
+                              size="sm" 
+                              className="h-9 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] uppercase tracking-widest px-4 shadow-lg shadow-blue-600/20"
+                            >
+                              Switch
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
-            )}
+            </div>
 
             <Button 
               variant="outline" 
@@ -3158,6 +3167,7 @@ function AdminTab() {
   const [giftAmount, setGiftAmount] = useState(100);
   const [isCreatingGift, setIsCreatingGift] = useState(false);
   const [newQrUrl, setNewQrUrl] = useState("");
+  const [vipEmail, setVipEmail] = useState("");
   const [isUpdatingQr, setIsUpdatingQr] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
@@ -3333,6 +3343,44 @@ function AdminTab() {
             disabled={isUpdatingQr}
           >
             {isUpdatingQr ? <Loader2 className="h-4 w-4 animate-spin" /> : "UPDATE SETTINGS"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <h3 className="font-black text-lg flex items-center gap-2 text-indigo-600">
+          <Crown className="h-5 w-5" />
+          VIP Management
+        </h3>
+        <div className="space-y-3">
+          <Input 
+            placeholder="USER EMAIL TO GRANT VIP" 
+            value={vipEmail} 
+            onChange={(e) => setVipEmail(e.target.value)}
+            className="h-12 font-bold"
+          />
+          <Button 
+            className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl"
+            onClick={async () => {
+              if(!vipEmail) return;
+              try {
+                const q = query(collection(db, "users"), where("email", "==", vipEmail));
+                const snap = await getDocs(q);
+                if (snap.empty) {
+                  toast.error("User not found");
+                  return;
+                }
+                const batch = writeBatch(db);
+                snap.docs.forEach(d => batch.update(d.ref, { isVIP: true }));
+                await batch.commit();
+                toast.success(`VIP status granted to ${vipEmail}`);
+                setVipEmail("");
+              } catch (e) {
+                toast.error("Failed to update VIP status");
+              }
+            }}
+          >
+            GRANT VIP STATUS
           </Button>
         </div>
       </div>
@@ -3815,23 +3863,25 @@ function GetCoinTab({
       return;
     }
 
-    // Daily Limit Check
+    // Daily nLimit Check
     if (!isAdmin && promo.type === 'subscribe') {
       const today = new Date().toISOString().split('T')[0];
       let currentEarn = profile.dailyEarnActions || 0;
       if (profile.lastLimitResetDate !== today) {
         currentEarn = 0;
       }
-      if (currentEarn >= 100) {
-        toast.error("Today is limit is over. You can only subscribe to 100 channels per day.");
+      const limitCount = profile.isVIP ? 150 : 100;
+      if (currentEarn >= limitCount) {
+        toast.error(`Today is limit is over. ${profile.isVIP ? "VIP" : "Normal"} users can only subscribe to ${limitCount} channels per day.`);
         return;
       }
     }
 
     // Ensure we have a connection
     if (!googleAccessToken) {
-      const success = await onConnectYouTube();
-      if (!success) return;
+      toast.error("Connect to YouTube first!");
+      handleConnectYouTube();
+      return;
     }
 
     try {
@@ -4056,7 +4106,13 @@ function GetCoinTab({
                 <Button 
                   variant="ghost" 
                   className="flex-1 h-14 rounded-xl font-bold text-slate-400 hover:bg-slate-50"
-                  onClick={() => setAvailablePromos(prev => prev.filter(p => p.id !== currentPromo.id))}
+                  onClick={() => {
+                    if (!googleAccessToken) {
+                      toast.error("Connect YouTube to properly verify or skip tasks!");
+                      return;
+                    }
+                    setAvailablePromos(prev => prev.filter(p => p.id !== currentPromo.id));
+                  }}
                   disabled={isAutoRunning}
                 >
                   Skip
@@ -4199,7 +4255,8 @@ function GetSubscribeTab({
   setMetadata,
   isFetchingMetadata,
   setIsFetchingMetadata,
-  addBotLog
+  addBotLog,
+  totalCoins
 }: { 
   profile: UserProfile | null, 
   isAdmin: boolean,
@@ -4216,7 +4273,8 @@ function GetSubscribeTab({
   setMetadata: (m: { title: string, thumbnail: string } | null) => void,
   isFetchingMetadata: boolean,
   setIsFetchingMetadata: (b: boolean) => void,
-  addBotLog: (msg: string) => void
+  addBotLog: (msg: string) => void,
+  totalCoins: number
 }) {
   const [myPromos, setMyPromos] = useState<Promotion[]>([]);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -4279,7 +4337,7 @@ function GetSubscribeTab({
       return;
     }
     
-    if (!isAdmin && profile.coins < totalCost) {
+    if (!isAdmin && (profile.coins < totalCost && totalCoins < totalCost)) {
       toast.error("Insufficient coins!");
       return;
     }
@@ -4291,8 +4349,9 @@ function GetSubscribeTab({
       if (profile.lastLimitResetDate !== today) {
         currentSubs = 0;
       }
-      if (currentSubs + count > 100) {
-        toast.error("Today is limit is over. You can only add 100 subscribers per day.");
+      const limitCount = profile.isVIP ? 150 : 100;
+      if (currentSubs + count > limitCount) {
+        toast.error(`Today's limit reached! ${profile.isVIP ? "VIP" : "Normal"} users can only request ${limitCount} subscribers per day.`);
         return;
       }
     }
@@ -4304,22 +4363,22 @@ function GetSubscribeTab({
         const channelMatch = youtubeUrl.match(/(?:https?:\/\/)?(?:www\.)?youtube\.com\/(?:channel\/|c\/|user\/|@)([a-zA-Z0-9_-]+)/) || 
                             youtubeUrl.match(/^@([a-zA-Z0-9_-]+)$/) ||
                             youtubeUrl.match(/^(UC[a-zA-Z0-9_-]{22})$/);
-        if (!channelMatch) {
+        if (!channelMatch && !isAdmin) {
           toast.error("Please enter a valid YouTube Channel URL, @handle or UC ID");
           setIsVerifying(false);
           return;
         }
-        targetId = channelMatch[1];
+        targetId = channelMatch ? channelMatch[1] : youtubeUrl;
       } else {
         const videoMatch = youtubeUrl.match(/(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)/) || 
                           youtubeUrl.match(/(?:https?:\/\/)?youtu\.be\/([a-zA-Z0-9_-]+)/) ||
                           youtubeUrl.match(/^([a-zA-Z0-9_-]{11})$/);
-        if (!videoMatch) {
+        if (!videoMatch && !isAdmin) {
           toast.error("Please enter a valid YouTube Video URL or ID");
           setIsVerifying(false);
           return;
         }
-        targetId = videoMatch[1];
+        targetId = videoMatch ? videoMatch[1] : youtubeUrl;
       }
 
       // Use pre-fetched metadata if available for "Fast AI Verification"
@@ -4596,6 +4655,7 @@ function GetSubscribeTab({
               key={t}
               onClick={() => {
                 setCampaignType(t);
+                setMetadata(null); // Clear metadata when switching type
               }}
               className={`flex-1 py-2.5 sm:py-3.5 rounded-lg font-black text-[10px] sm:text-xs transition-all ${campaignType === t ? "bg-blue-50 text-[#2196F3]" : "text-slate-400 hover:text-slate-600"}`}
             >
@@ -4606,13 +4666,18 @@ function GetSubscribeTab({
 
         {/* Package List */}
         <AnimatePresence>
-          {youtubeUrl.trim() && !urlError && (
+          {(youtubeUrl.trim() || isAdmin) && (
             <motion.div 
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               className="space-y-2.5 sm:space-y-3 overflow-hidden"
             >
+              {urlError && !isAdmin && (
+                <div className="bg-red-50 p-3 rounded-xl border border-red-100 mb-2">
+                  <p className="text-[10px] text-red-500 font-bold text-center">{urlError}</p>
+                </div>
+              )}
               {packages.map((pkg, idx) => (
                 <motion.div 
                   key={idx}
@@ -4686,10 +4751,10 @@ function GetSubscribeTab({
                       size="icon" 
                       className="text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg sm:rounded-xl h-8 w-8 sm:h-10 sm:w-10"
                       onClick={() => {
-                        if (isAdmin || promo.userId === profile?.uid) {
+                        if (isAdmin) {
                           cancelCampaign(promo);
                         } else {
-                          toast.error("You can only delete your own campaigns.");
+                          toast.error("Only Admins can remove campaigns.");
                         }
                       }}
                     >
