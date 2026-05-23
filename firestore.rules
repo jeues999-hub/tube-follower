@@ -114,7 +114,7 @@ service cloud.firestore {
 
     // Rules
     match /users/{userId} {
-      allow get, list: if isAuthenticated();
+      allow get, list: if true;
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
                       request.resource.data.uid == userId &&
                       request.resource.data.coins == 0 &&
@@ -130,7 +130,7 @@ service cloud.firestore {
     }
 
     match /promotions/{promotionId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create: if isAuthenticated() && isValidPromotion(request.resource.data) && 
                       (request.resource.data.userId == request.auth.uid || isAdmin());
       allow update: if isAuthenticated() && (
@@ -145,7 +145,7 @@ service cloud.firestore {
     }
 
     match /actions/{actionId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create: if isAuthenticated() && 
                       isValidAction(request.resource.data) &&
                       actionId.matches("^" + request.resource.data.userId + "_.*") &&
@@ -158,7 +158,7 @@ service cloud.firestore {
     }
 
     match /promo_codes/{codeId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, delete: if isAdmin();
       allow update: if (
                       isAuthenticated() && 
@@ -172,7 +172,7 @@ service cloud.firestore {
     }
 
     match /transactions/{transactionId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
     }
 

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TUBE FOLLOWER</string>
+    <string name="title_activity_main">TUBE FOLLOWER</string>
+    <string name="package_name">com.tubefollower.app</string>
+    <string name="custom_url_scheme">com.tubefollower.app</string>
+</resources>

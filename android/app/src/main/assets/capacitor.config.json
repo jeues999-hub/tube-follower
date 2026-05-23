@@ -1,0 +1,8 @@
+{
+	"appId": "com.tubefollower.app",
+	"appName": "TUBE FOLLOWER",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	}
+}
