@@ -205,13 +205,13 @@ function Login({ onLogin, isLoading, acceptedTerms1, setAcceptedTerms1, accepted
             <div className="flex items-center gap-3 text-left bg-slate-50 p-3 rounded-xl border border-slate-100">
               <input type="checkbox" id="terms1" checked={acceptedTerms1} onChange={(e) => setAcceptedTerms1(e.target.checked)} className="h-5 w-5 rounded border-slate-300 text-blue-600" />
               <Label htmlFor="terms1" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider cursor-pointer">
-                I agree to the <span className="text-blue-600 hover:underline" onClick={(e) => { e.preventDefault(); onOpenTerms(); }}>Terms</span>
+                I agree to the <a href="/terms.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Terms of Service</a>
               </Label>
             </div>
             <div className="flex items-center gap-3 text-left bg-slate-50 p-3 rounded-xl border border-slate-100">
               <input type="checkbox" id="terms2" checked={acceptedTerms2} onChange={(e) => setAcceptedTerms2(e.target.checked)} className="h-5 w-5 rounded border-slate-300 text-blue-600" />
               <Label htmlFor="terms2" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider cursor-pointer">
-                I agree to the <span className="text-blue-600 hover:underline" onClick={(e) => { e.preventDefault(); onOpenPrivacy(); }}>Privacy Policy</span>
+                I agree to the <a href="/privacy.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Privacy Policy</a>
               </Label>
             </div>
           </div>
@@ -327,9 +327,9 @@ function Login({ onLogin, isLoading, acceptedTerms1, setAcceptedTerms1, accepted
             <span className="text-xl font-black tracking-tight uppercase">TUBE FOLLOWER</span>
           </div>
           <div className="flex gap-8 text-[11px] font-black text-slate-400 uppercase tracking-widest">
-            <a href="/terms" className="hover:text-blue-600 transition-colors">Terms of Service</a>
-            <a href="/privacy" className="hover:text-blue-600 transition-colors">Privacy Policy</a>
-            <a href="mailto:tubefollowerhelp@gmail.com" className="hover:text-blue-600 transition-colors">Support</a>
+            <a href="/terms.html" className="hover:text-blue-600 transition-colors">Terms of Service</a>
+            <a href="/privacy.html" className="hover:text-blue-600 transition-colors">Privacy Policy</a>
+            <a href="mailto:durganirahul793@gmail.com" className="hover:text-blue-600 transition-colors">Support</a>
           </div>
           <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
             © 2026 TUBE FOLLOWER • ALL RIGHTS RESERVED
@@ -2041,12 +2041,19 @@ function MainApp() {
   };
 
   if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-white text-slate-900">
-        <Toaster position="top-center" richColors />
-        <Loader2 className="h-8 w-8 animate-spin text-[#2196F3]" />
-      </div>
-    );
+    let hasLocalAuth = false;
+    try {
+      hasLocalAuth = Object.keys(localStorage).some(key => key.includes("firebase:authUser"));
+    } catch (e) {}
+
+    if (hasLocalAuth) {
+      return (
+        <div className="flex h-screen items-center justify-center bg-white text-slate-900">
+          <Toaster position="top-center" richColors />
+          <Loader2 className="h-8 w-8 animate-spin text-[#2196F3]" />
+        </div>
+      );
+    }
   }
 
   if (!user) {
@@ -3306,19 +3313,43 @@ function AdminTab() {
   const [isUpdatingQr, setIsUpdatingQr] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
+  // New states for dynamic GCP OAuth Option Settings (Saved in Firebase data store)
+  const [selectedPubOption, setSelectedPubOption] = useState<"option1" | "option2">("option2");
+  const [gcpClientId, setGcpClientId] = useState("");
+  const [gcpClientSecret, setGcpClientSecret] = useState("");
+  const [customDomain, setCustomDomain] = useState("");
+
+  // SECOND GCP PROJECT CONFIGURATIONS (Option 1 - Custom fast verification pathway)
+  const [proj2ClientId, setProj2ClientId] = useState("");
+  const [proj2ClientSecret, setProj2ClientSecret] = useState("");
+  const [proj2CustomDomain, setProj2CustomDomain] = useState("");
+  const [proj2Option, setProj2Option] = useState<"option1" | "option2">("option1");
+  const [activeProject, setActiveProject] = useState<"project1" | "project2">("project2");
+
   const updateAppConfig = async () => {
-    if (!newQrUrl.trim()) {
-      toast.error("Please enter a valid URL");
-      return;
-    }
-    
     setIsUpdatingQr(true);
     try {
       await setDoc(doc(db, "config", "app"), {
         qrCodeUrl: newQrUrl.trim(),
+        
+        // Project 1 details
+        selectedPubOption,
+        gcpClientId: gcpClientId.trim(),
+        gcpClientSecret: gcpClientSecret.trim(),
+        customDomain: customDomain.trim(),
+
+        // Project 2 details
+        proj2ClientId: proj2ClientId.trim(),
+        proj2ClientSecret: proj2ClientSecret.trim(),
+        proj2CustomDomain: proj2CustomDomain.trim(),
+        proj2Option,
+        
+        // Active switcher
+        activeProject,
+
         updatedAt: serverTimestamp()
       }, { merge: true });
-      toast.success("App configuration updated!");
+      toast.success("All configurations for both first and second projects saved safely in Firestore!");
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, "config/app");
       toast.error("Failed to update settings");
@@ -3359,6 +3390,27 @@ function AdminTab() {
     const activeUnsub = onSnapshot(query(collection(db, "users"), where("lastActive", ">=", new Date(Date.now() - 5 * 60 * 1000))), (snap) => {
       setStats(prev => ({ ...prev, activeUsers: snap.size }));
     }, (err) => handleFirestoreError(err, OperationType.LIST, "admin/active_users"));
+
+    // Real-time app config subscriber so values are loaded on start
+    const configUnsub = onSnapshot(doc(db, "config", "app"), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.qrCodeUrl) setNewQrUrl(data.qrCodeUrl);
+        if (data.selectedPubOption) setSelectedPubOption(data.selectedPubOption);
+        if (data.gcpClientId) setGcpClientId(data.gcpClientId);
+        if (data.gcpClientSecret) setGcpClientSecret(data.gcpClientSecret);
+        if (data.customDomain) setCustomDomain(data.customDomain);
+
+        // Project 2 settings
+        if (data.proj2ClientId) setProj2ClientId(data.proj2ClientId);
+        if (data.proj2ClientSecret) setProj2ClientSecret(data.proj2ClientSecret);
+        if (data.proj2CustomDomain) setProj2CustomDomain(data.proj2CustomDomain);
+        if (data.proj2Option) setProj2Option(data.proj2Option);
+        if (data.activeProject) setActiveProject(data.activeProject);
+      }
+    }, (err) => {
+      console.warn("Could not load dynamic admin config:", err);
+    });
     
     setLoading(false);
     return () => {
@@ -3369,6 +3421,7 @@ function AdminTab() {
       vipUnsub();
       promoCodesUnsub();
       activeUnsub();
+      configUnsub();
     };
   }, []);
 
@@ -3501,6 +3554,321 @@ function AdminTab() {
             VIEW GUIDE
           </Button>
         </div>
+
+        {/* Dynamic Firebase Data Store GCP Options */}
+        <div className="border border-slate-200 rounded-2xl p-5 bg-slate-50/60 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200/60 pb-3 gap-2">
+            <div>
+              <label className="text-[12px] font-black text-blue-800 uppercase tracking-wide block">
+                🌐 GOOGLE CLOUD OAUTH DATA STORE (SAVED IN FIRESTORE)
+              </label>
+              <p className="text-[10px] text-slate-500 font-semibold leading-relaxed mt-0.5">
+                Manage credentials and publication states for both your Google projects.
+              </p>
+            </div>
+            {/* Active Project Switcher */}
+            <div className="flex items-center gap-1.5 bg-slate-200/80 p-0.5 rounded-lg self-start">
+              <button
+                type="button"
+                onClick={() => setActiveProject("project1")}
+                className={`px-3 py-1 text-[10px] font-black uppercase rounded-md transition-all ${
+                  activeProject === "project1"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-slate-600 hover:text-slate-800"
+                }`}
+              >
+                Project 1 ACTIVE
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveProject("project2")}
+                className={`px-3 py-1 text-[10px] font-black uppercase rounded-md transition-all ${
+                  activeProject === "project2"
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "text-slate-600 hover:text-slate-800"
+                }`}
+              >
+                Project 2 ACTIVE
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* PROJECT 1 CONFIG BLOCK */}
+            <div className={`p-4 rounded-xl border transition-all ${
+              activeProject === "project1" 
+                ? "border-blue-500 bg-white ring-2 ring-blue-500/10" 
+                : "border-slate-200 bg-white/70 opacity-80"
+            }`}>
+              <div className="flex items-center justify-between border-b pb-2 mb-3">
+                <span className="text-[11px] font-extrabold text-blue-950 uppercase flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" />
+                  First Project Setup
+                </span>
+                <span className="text-[9px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold uppercase">
+                  Option 2: Testing Only
+                </span>
+              </div>
+              <p className="text-[9.5px] text-slate-500 font-medium leading-relaxed mb-3">
+                Use your current Google Console project. <b>Keep your uploaded logo</b> but turn status to <b>Testing mode</b> with explicit test users.
+              </p>
+
+              <div className="space-y-3 block">
+                <div className="space-y-1">
+                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">Project 1 Client ID</label>
+                  <Input 
+                    placeholder="Enter Project 1 Client ID" 
+                    value={gcpClientId} 
+                    onChange={(e) => setGcpClientId(e.target.value)}
+                    className="h-10 font-bold text-[11px]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">Project 1 Client Secret</label>
+                  <Input 
+                    placeholder="Enter Project 1 Client Secret" 
+                    value={gcpClientSecret} 
+                    onChange={(e) => setGcpClientSecret(e.target.value)}
+                    className="h-10 font-bold text-[11px]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">GCP Consent Screen URL / Link</label>
+                  <Input 
+                    placeholder="Project 1 custom URL (Optional)" 
+                    value={customDomain} 
+                    onChange={(e) => setCustomDomain(e.target.value)}
+                    className="h-10 font-bold text-[11px]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* PROJECT 2 CONFIG BLOCK */}
+            <div className={`p-4 rounded-xl border transition-all ${
+              activeProject === "project2" 
+                ? "border-emerald-500 bg-white ring-2 ring-emerald-500/10" 
+                : "border-slate-200 bg-white/70 opacity-80"
+            }`}>
+              <div className="flex items-center justify-between border-b pb-2 mb-3">
+                <span className="text-[11px] font-extrabold text-emerald-950 uppercase flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                  Second Project Setup
+                </span>
+                <span className="text-[9px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold uppercase">
+                  Option 1: Quick Release
+                </span>
+              </div>
+              <p className="text-[9.5px] text-slate-500 font-medium leading-relaxed mb-3">
+                Use your brand new Google Cloud project. <b>Leave the App Logo empty</b> to completely bypass ownership brand checks for instant public release!
+              </p>
+
+              <div className="space-y-3 block">
+                <div className="space-y-1">
+                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">Project 2 Client ID</label>
+                  <Input 
+                    placeholder="Enter Project 2 Client ID" 
+                    value={proj2ClientId} 
+                    onChange={(e) => setProj2ClientId(e.target.value)}
+                    className="h-10 font-bold text-[11px]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">Project 2 Client Secret</label>
+                  <Input 
+                    placeholder="Enter Project 2 Client Secret" 
+                    value={proj2ClientSecret} 
+                    onChange={(e) => setProj2ClientSecret(e.target.value)}
+                    className="h-10 font-bold text-[11px]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">Homepage / Vercel Redirect URL</label>
+                  <Input 
+                    placeholder="e.g. https://your-app.vercel.app" 
+                    value={proj2CustomDomain} 
+                    onChange={(e) => setProj2CustomDomain(e.target.value)}
+                    className="h-10 font-bold text-[11px]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive Live Copy-Paste Helper for GCP Console Setup */}
+          <div className="border border-indigo-100 rounded-xl p-4 bg-indigo-50/40 space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-[14px]">📋</span>
+              <div>
+                <h4 className="text-[11px] font-black text-indigo-950 uppercase tracking-wider">
+                  RAPID GCP OAUTH SETUP WIZARD &amp; EXACT LINKS
+                </h4>
+                <p className="text-[9.5px] text-slate-500 font-semibold leading-relaxed">
+                  Simply copy and paste these exact links into your Google Cloud Console to configure your Brand screen and OAuth Credentials instantly!
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+              {/* BRANDING SCREEN FIELDS */}
+              <div className="bg-white p-3 rounded-xl border border-slate-200/80 space-y-2.5">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block border-b pb-1">
+                  1. OAuth Consent Screen (Branding Page)
+                </span>
+                
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-500 font-black uppercase">App Name</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText("TUBE FOLLOWER PUBLIC");
+                        toast.success("App name copied!");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 p-1.5 rounded text-[10px] font-bold text-slate-700 border border-slate-100 select-all">
+                    TUBE FOLLOWER PUBLIC
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-500 font-black uppercase">App Homepage URL</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = proj2CustomDomain ? proj2CustomDomain.trim() : window.location.origin;
+                        navigator.clipboard.writeText(url);
+                        toast.success("Homepage URL copied!");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 p-1.5 rounded text-[10px] font-mono text-indigo-600 break-all select-all font-semibold">
+                    {proj2CustomDomain ? proj2CustomDomain.trim() : window.location.origin}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-500 font-black uppercase">Privacy Policy Link</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const base = proj2CustomDomain ? proj2CustomDomain.trim().replace(/\/$/, "") : window.location.origin;
+                        const privacyUrl = `${base}/privacy.html`;
+                        navigator.clipboard.writeText(privacyUrl);
+                        toast.success("Privacy URL copied!");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 p-1.5 rounded text-[10px] font-mono text-indigo-600 break-all select-all font-semibold">
+                    {proj2CustomDomain ? proj2CustomDomain.trim().replace(/\/$/, "") : window.location.origin}/privacy.html
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-500 font-black uppercase">Support &amp; Developer Email</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText("durganirahul793@gmail.com");
+                        toast.success("Support email copied!");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 p-1.5 rounded text-[10px] font-semibold text-slate-700 select-all">
+                    durganirahul793@gmail.com
+                  </div>
+                </div>
+              </div>
+
+              {/* CREDENTIALS CLIENT ID FIELDS */}
+              <div className="bg-white p-3 rounded-xl border border-slate-200/80 space-y-2.5">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block border-b pb-1">
+                  2. OAuth Client Credentials Screen (Web Application)
+                </span>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-500 font-black uppercase">Application Type</span>
+                  </div>
+                  <div className="bg-slate-50 p-1.5 rounded text-[10px] font-extrabold text-slate-800 border border-slate-100 uppercase flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    Web Application
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9.5px] font-black uppercase text-amber-900 flex items-center gap-1">
+                      ⚠️ Authorized Javascript Origins
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(window.location.origin);
+                        toast.success("Javascript origin copied!");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Copy Origin
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 p-1.5 rounded text-[9.5px] font-mono text-slate-600 border border-slate-100 break-all select-all leading-normal">
+                    <ul className="list-disc pl-3">
+                      <li>{window.location.origin}</li>
+                      <li>https://gen-lang-client-0716940414.firebaseapp.com</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold uppercase text-emerald-900 flex items-center gap-1">
+                      🔥 AUTHORIZED REDIRECT URI (CRITICAL FIELD!)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText("https://gen-lang-client-0716940414.firebaseapp.com/__/auth/handler");
+                        toast.success("Authorized Redirect URI copied!");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <div className="bg-emerald-50/50 p-2 rounded text-[10px] font-mono text-emerald-800 border border-emerald-100 break-all select-all font-bold">
+                    https://gen-lang-client-0716940414.firebaseapp.com/__/auth/handler
+                  </div>
+                  <p className="text-[8.5px] text-slate-500 font-semibold leading-relaxed">
+                    Paste this exact link in GCP "Authorized redirect URIs". This allows your browser popup to securely hand off credential tokens back to your app!
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Informative Info Banner */}
+          <div className="bg-blue-50 border border-blue-100 p-3 rounded-lg text-[10px] text-slate-700 leading-relaxed font-semibold">
+            📢 <b className="text-blue-900 uppercase">Firestore Synchronizer Active:</b> Your login and credential options map directly to your live Firestore database schema. You can switch between projects using the toggles in real-time, modify parameters, and save both configurations inside the database using the button below.
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Payment QR Code URL</label>
@@ -5119,31 +5487,136 @@ function PublishingGuide({ open, onOpenChange }: { open: boolean, onOpenChange: 
             </ol>
 
             {/* EXPANDED DOMAIN OWNERSHIP TROUBLESHOOTING STEP BY STEP FOR EXPLICIT IMAGE ERROR */}
-            <div className="bg-white/95 p-4 rounded-xl border border-amber-200 space-y-2 mt-2 shadow-sm text-left">
-              <p className="text-[10.5px] font-black text-red-600 uppercase flex items-center gap-1">
-                ⚠️ SOLVING: "Homepage URL is not registered to you"
+            <div className="bg-white/95 p-5 rounded-2xl border-2 border-amber-300 space-y-4 mt-3 shadow-md text-left">
+              <p className="text-[12px] font-black text-red-650 uppercase flex items-center gap-1.5 border-b-2 border-rose-150 pb-2 animate-pulse">
+                🚨 STUCK WITH THE WEBSITE HOMEPAGE NOT REGISTERED TO YOU ERROR? LET'S FIX IT NOW!
               </p>
-              <p className="text-[10px] text-slate-500 font-medium leading-normal">
-                If Google GCP declines your logo/branding due to unregistered website ownership, here is exactly how to fix it in 2 minutes:
-              </p>
-              <div className="space-y-2 pt-1">
-                <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
-                  <span className="font-bold text-slate-800 block text-[9.5px]">🚀 METHOD A: Zero-Code Dynamic Verification (Recommended)</span>
-                  <ol className="list-decimal pl-4 text-[9px] text-slate-600 space-y-1 font-medium mt-1">
-                    <li>Go to <b>Google Search Console</b> (search.google.com/search-console).</li>
-                    <li>Add property with URL prefix: <code className="font-mono text-blue-600 font-bold bg-white px-1">https://tube-follower.vercel.app/</code>.</li>
-                    <li>Choose verification method: <b>HTML Meta Tag</b>.</li>
-                    <li>Copy just the content string, e.g. <code className="font-mono bg-white px-1 font-bold text-slate-800">U49gM8HmBfcbtBfze...</code></li>
-                    <li>Go to your Firestore Database <code className="font-mono text-purple-600 font-bold">config</code> collection → <code className="font-mono text-purple-600 font-bold">app</code> document.</li>
-                    <li>Create/update a string field named <code className="font-mono font-bold text-slate-800 bg-white px-1">googleSiteVerification</code> with your content string.</li>
-                    <li>Open your live website, then click <b>Verify</b> in Search Console!</li>
-                  </ol>
+
+              {/* QUICK INSTANT WORKAROUND */}
+              <div className="p-4 bg-green-50/95 rounded-xl border border-green-200 space-y-3">
+                <span className="font-extrabold text-green-900 block text-[11px] uppercase tracking-wide">
+                  ⚡ SOLUTION FOR: "YOU CANNOT REMOVE THAT LOGO" & VERIFICATION LOCKS
+                </span>
+                <p className="text-[10px] text-slate-705 leading-relaxed font-semibold">
+                  You are 100% correct! The Google Cloud Console has a notorious UI limitation: <b>once you upload an App Logo, GCP does not show any "Delete" or "Remove" button</b> to clear it. Because a logo is stuck on your consent screen, Google forces you to undergo strict **manual brand verification**, which checks ownership of the domain and blocks you with the <i>"The website of your homepage URL is not registered to you"</i> error!
+                </p>
+                <div className="bg-white p-3 rounded-lg border border-green-200 space-y-2.5 text-left">
+                  <p className="text-[10px] text-green-950 font-extrabold uppercase animate-pulse">How to instantly break free from this lock (Choose One):</p>
+                  
+                  <div className="space-y-2">
+                    <p className="text-[9.5px] text-slate-800 leading-relaxed font-bold">
+                      <span className="text-emerald-750">Option 1: Create a New GCP Project (Recommended & Takes 30 Seconds)</span>
+                      <br />
+                      Since GCP only allows one OAuth brand per project, the easiest workaround is to simply create a fresh Google Cloud project:
+                    </p>
+                    <ol className="list-decimal pl-4 text-[9px] text-slate-600 space-y-1 font-semibold">
+                      <li>Go to your Google Cloud Console top navigation bar, click the project dropdown, and click <b className="text-slate-800">"New Project"</b>.</li>
+                      <li>Configure your fresh project's OAuth Consent Screen. <b className="text-red-650">This time, leave the "App Logo" slot completely blank!</b></li>
+                      <li>Fill out your Homepage/Privacy links to Vercel, then click "Create Credentials" &rarr; "OAuth client ID". <b className="text-red-650">CRITICAL: Select "Web application" as your Application type!</b> (Do NOT select "Android" or "iOS" here, because our app operates on the web browser. Choosing Android will prompt you for a SHA-1 fingerprint and fail to work for our login flow).</li>
+                      <li>Generate your new Client ID / Client Secret, and update your app settings. Because no custom logo is uploaded, <b className="text-emerald-700">GCP will bypass the manual brand review & website registration requirement completely</b>, and login will work instantly!</li>
+                    </ol>
+                  </div>
+
+                  <hr className="border-slate-150" />
+
+                  <div className="space-y-2">
+                    <p className="text-[9.5px] text-slate-800 leading-relaxed font-bold">
+                      <span className="text-amber-700">Option 2: Switch the Consent Screen back to "Testing" Status</span>
+                      <br />
+                      If you want to keep using your current GCP project with the uploaded logo:
+                    </p>
+                    <ol className="list-decimal pl-4 text-[9px] text-slate-600 space-y-1 font-semibold">
+                      <li>In Google Cloud Console under <b>APIs & Services</b> &rarr; <b>OAuth Consent Screen</b>.</li>
+                      <li>Click the button that says <b className="text-slate-800">"Back to testing"</b> (under the publishing status section).</li>
+                      <li>When an app is in "Testing" mode, Google completely suspends the domain ownership requirement and bypasses logo brand review!</li>
+                      <li>Under the <b>"Test users"</b> list, click Add Users and add any emails (like your email <b className="text-slate-800">durganirahul793@gmail.com</b>) you want to log in with. You can test and run the app for up to 100 users with zero verification forms!</li>
+                    </ol>
+                  </div>
+
+                  <hr className="border-slate-150" />
+
+                  <div className="space-y-1.5 text-[9px] text-slate-705 leading-relaxed">
+                    <p className="font-extrabold text-red-700">⚠️ Why Vercel.app domains fail verification in Production:</p>
+                    <p>
+                      Because <code className="bg-red-50 text-red-650 px-1 py-0.2 rounded font-mono">vercel.app</code> is a globally shared public suffix (like <i>github.io</i> or <i>herokuapp.com</i>), Google Cloud does not permit individual developers to verify the top-level suffix. Therefore, automated verification for standard subdomains on the public suffix list is usually blocked for production use. If you want full Production mode with a custom logo, you must use a custom domain you purchased (e.g., <code className="font-mono text-blue-600">tube-follower.com</code>).
+                    </p>
+                  </div>
                 </div>
-                <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
-                  <span className="font-bold text-slate-800 block text-[9.5px]">📁 METHOD B: GitHub Dynamic File Upload</span>
-                  <p className="text-[9px] text-slate-600 font-medium mt-0.5">
-                    Download Google's verification HTML file (e.g., <code className="font-mono bg-white text-slate-800 px-0.5">googlefa1f0242ec11d8e1.html</code>) and save it inside your project's <code className="font-bold">/public/</code> folder, then commit the change to GitHub to trigger Vercel auto-deployment! 
-                  </p>
+              </div>
+
+              {/* PERMANENT FIX */}
+              <div className="p-3 bg-amber-50/90 rounded-xl border border-amber-200 space-y-2">
+                <span className="font-extrabold text-[#795548] block text-[11px] uppercase">
+                  ⭐ PERMANENT FIX: PROPERLY LINK AND CLAIM YOUR HOMEPAGE
+                </span>
+                <p className="text-[10px] text-slate-700 leading-relaxed font-semibold">
+                  If you absolutely want a custom App Logo, you must satisfy Google's domain verification with these exact steps:
+                </p>
+                <ol className="list-decimal pl-4 text-[9.5px] text-slate-700 space-y-2 font-bold">
+                  <li>
+                    <span className="text-amber-900">Step 1: Check Search Console Account Login:</span>
+                    <p className="text-[9px] text-slate-650 font-medium">
+                      You must sign open <span className="underline">search.google.com/search-console</span> using the <b>EXACT SAME Google account</b> (e.g. <b>{auth.currentUser?.email || "durganirahul793@gmail.com"}</b>) that owns the Google Cloud Console project! If they are on different Gmails, the link will fail.
+                    </p>
+                  </li>
+                  <li>
+                    <span className="text-amber-900">Step 2: Add exact URL Prefix:</span>
+                    <p className="text-[9px] text-slate-650 font-medium">
+                      In Search Console, add a property. You MUST use <b>"URL prefix"</b> (the right-hand box) and type exactly: <code className="bg-white text-red-600 px-1 py-0.5 rounded border">https://tube-follower.vercel.app/</code> (with the trailing slash!). Do NOT use domain-level verification unless you own DNS.
+                    </p>
+                  </li>
+                  <li>
+                    <span className="text-amber-900">Step 3: Register in GCP "Domain Verification" Panel:</span>
+                    <p className="text-[9px] text-slate-650 font-medium">
+                      Even after Search Console says "Verified", Google Cloud Console doesn't know until you link it!
+                      Open GCP side-menu &rarr; <b>APIs & Services</b> &rarr; <b>Domain verification</b>. Click the blue <b>"Add domain"</b> button, and paste exactly <code className="bg-white text-blue-600 px-1 py-0.5 rounded border">https://tube-follower.vercel.app/</code>, then click Add. This instantly links the property!
+                    </p>
+                  </li>
+                  <li>
+                    <span className="text-amber-900">Step 4: Request Re-verification:</span>
+                    <p className="text-[9px] text-slate-650 font-medium">
+                      Now go back to the OAuth Consent screen, select <b>"I have fixed the issues"</b>, click <b>Proceed</b>. Google's automated scanner will detect the registered domain match instantly and clear the warning!
+                    </p>
+                  </li>
+                </ol>
+              </div>
+
+              {/* SECTION: INVALID DOMAIN SCHEME EXPLAINED */}
+              <div className="p-3 bg-red-50/90 rounded-xl border border-red-200 space-y-2">
+                <span className="font-extrabold text-red-900 block text-[11px] uppercase">
+                  ❌ FIX 3: "Invalid domain: must use either http or https as the scheme"
+                </span>
+                <p className="text-[10px] text-slate-700 leading-relaxed font-semibold">
+                  This happens under App Information inputs, if you wrote raw domain text without a protocol:
+                </p>
+                <div className="space-y-1.5 text-[9.5px] font-bold">
+                  <div className="flex items-center gap-1.5 bg-rose-100 p-1.5 rounded-md text-red-800">
+                    <span className="bg-red-600 text-white font-black px-1.5 py-0.2 rounded text-[8px]">WRONG</span>
+                    <code>tube-follower.vercel.app</code>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-emerald-100 p-1.5 rounded-md text-green-800">
+                    <span className="bg-emerald-600 text-white font-black px-1.5 py-0.2 rounded text-[8px]">CORRECT</span>
+                    <code>https://tube-follower.vercel.app/</code>
+                  </div>
+                </div>
+                <ul className="list-disc pl-4 text-[9px] text-slate-600 space-y-1 font-semibold mt-1">
+                  <li><b>Application home page:</b> Must be exactly <code className="font-mono text-green-700 bg-white px-1">https://tube-follower.vercel.app/</code></li>
+                  <li><b>Privacy Policy Link:</b> Must be exactly <code className="font-mono text-green-700 bg-white px-1">https://tube-follower.vercel.app/privacy</code></li>
+                  <li><b>Terms of Service Link:</b> Must be exactly <code className="font-mono text-green-700 bg-white px-1">https://tube-follower.vercel.app/terms</code></li>
+                  <li><b>Authorized domains (below on same page):</b> Enter normal domain <code className="font-mono text-blue-600 bg-white px-1">tube-follower.vercel.app</code> <b>without</b> protocol scheme!</li>
+                </ul>
+              </div>
+
+              {/* RE-VERIFICATION GUIDE */}
+              <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200 space-y-1.5">
+                <span className="font-extrabold text-blue-800 block text-[11px] uppercase">
+                  🔍 Reference Search Console HTML Meta Tag
+                </span>
+                <div className="text-[9.5px] text-slate-600 font-medium">
+                  If Search Console ever asks you to re-verify using a site-wide meta tag, our live website is automatically pre-configured with the exact required verification token:
+                  <code className="block font-mono text-[9px] text-[#E91E63] font-bold bg-white p-1.5 rounded border border-slate-200 mt-1 select-all">
+                    iVP4vO_ce7WMH7hInfPatJ_nJotZFwRSZA18dGMASVU
+                  </code>
                 </div>
               </div>
             </div>
