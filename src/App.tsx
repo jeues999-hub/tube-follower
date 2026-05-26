@@ -147,7 +147,7 @@ interface ConnectedAccount {
 
 // --- Components ---
 
-function Login({ onLogin, isLoading, acceptedTerms1, setAcceptedTerms1, acceptedTerms2, setAcceptedTerms2, onOpenTerms, onOpenPrivacy }: { onLogin: () => void, isLoading: boolean, acceptedTerms1: boolean, setAcceptedTerms1: (val: boolean) => void, acceptedTerms2: boolean, setAcceptedTerms2: (val: boolean) => void, onOpenTerms: () => void, onOpenPrivacy: () => void }) {
+function Login({ onLogin, onDemoLogin, isLoading, acceptedTerms1, setAcceptedTerms1, acceptedTerms2, setAcceptedTerms2, onOpenTerms, onOpenPrivacy }: { onLogin: () => void, onDemoLogin?: () => void, isLoading: boolean, acceptedTerms1: boolean, setAcceptedTerms1: (val: boolean) => void, acceptedTerms2: boolean, setAcceptedTerms2: (val: boolean) => void, onOpenTerms: () => void, onOpenPrivacy: () => void }) {
   return (
     <div className="flex min-h-[100dvh] flex-col items-center bg-white text-slate-900 overflow-x-hidden relative">
       {/* Background Decorations */}
@@ -192,6 +192,15 @@ function Login({ onLogin, isLoading, acceptedTerms1, setAcceptedTerms1, accepted
               <Zap className="mr-3 h-6 w-6 fill-white group-hover:animate-bounce" />
             )}
             {isLoading ? "Signing in..." : "Get Started Free"}
+          </Button>
+
+          <Button 
+            onClick={onDemoLogin} 
+            size="lg" 
+            variant="outline"
+            className="w-full sm:w-72 h-16 border-2 border-slate-200 text-slate-700 bg-white hover:bg-slate-50 hover:text-slate-900 rounded-2xl font-black text-lg transition-all active:scale-[0.98] shadow-lg shadow-slate-100/50"
+          >
+            Explore Demo App (No Login)
           </Button>
           
           <div className="flex items-center justify-center gap-2 mt-2">
@@ -484,9 +493,34 @@ export default function App() {
 }
 
 function MainApp() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [realUser, setUser] = useState<FirebaseUser | null>(null);
+  const [realGoogleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [realProfile, setProfile] = useState<UserProfile | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
+  const user = isDemoMode ? {
+    uid: "youtube-demo-reviewer",
+    displayName: "Google Reviewer (Demo Mode)",
+    photoURL: "https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png",
+    email: "reviewer-demo@followerhelper.com",
+    emailVerified: true
+  } as any : realUser;
+
+  const profile = isDemoMode ? {
+    uid: "youtube-demo-reviewer",
+    displayName: "Google Reviewer (Demo Mode)",
+    photoURL: "https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png",
+    coins: 450,
+    youtubeConnected: true,
+    dailyCampaignSubs: 12,
+    dailyEarnActions: 38,
+    referralCode: "DEMO99",
+    referralEarnings: 75,
+    lastLimitResetDate: new Date().toISOString().split('T')[0],
+  } as any : realProfile;
+
+  const googleAccessToken = isDemoMode ? "demo-access-token" : realGoogleAccessToken;
+
   const [loading, setLoading] = useState(true);
   const [deviceId, setDeviceId] = useState<string | null>(localStorage.getItem('device_id'));
 
@@ -921,28 +955,38 @@ function MainApp() {
   // Fetch referral count
   useEffect(() => {
     if (!profile) return;
+    if (isDemoMode) {
+      setReferralCount(5);
+      return;
+    }
     const q = query(collection(db, "users"), where("referredBy", "==", profile.uid));
     const unsubscribe = onSnapshot(q, (snap) => {
       setReferralCount(snap.size);
     }, (error) => {
+      if (isDemoMode) return;
       handleFirestoreError(error, OperationType.LIST, "referrals");
     });
     return unsubscribe;
-  }, [profile?.uid]);
+  }, [profile?.uid, isDemoMode]);
 
 
   // Fetch completed tasks to filter them out
   useEffect(() => {
     if (!profile) return;
+    if (isDemoMode) {
+      setCompletedTaskIds(new Set(["demo-p99"]));
+      return;
+    }
     const q = query(collection(db, "actions"), where("userId", "==", profile.uid));
     const unsubscribe = onSnapshot(q, (snap) => {
       const ids = new Set(snap.docs.map(doc => doc.data().promotionId as string));
       setCompletedTaskIds(ids);
     }, (error) => {
+      if (isDemoMode) return;
       handleFirestoreError(error, OperationType.LIST, "actions");
     });
     return unsubscribe;
-  }, [profile?.uid]);
+  }, [profile?.uid, isDemoMode]);
 
   // Sync ref with state and filter completed
   useEffect(() => {
@@ -952,6 +996,51 @@ function MainApp() {
   // Fetch available promotions for both Home list and Automation
   useEffect(() => {
     if (!profile) return;
+
+    if (isDemoMode) {
+      setAvailablePromos([
+        {
+          id: "demo-p1",
+          userId: "some-other-user",
+          title: "T-Series Remix Channel",
+          type: "subscribe",
+          targetId: "UCq-Fj5jknLsUf-MWSy4_brA",
+          channelId: "UCq-Fj5jknLsUf-MWSy4_brA",
+          thumbnail: "https://lh3.googleusercontent.com/md/default-user=s96-c",
+          coinsPerAction: 10,
+          active: true,
+          totalActions: 100,
+          completedActions: 45
+        },
+        {
+          id: "demo-p2",
+          userId: "some-other-user2",
+          title: "MrBeast Gaming Reaction",
+          type: "like",
+          targetId: "2S2vgXvH-E4",
+          channelId: "UCq-Fj5jknLsUf-MWSy4_brA",
+          thumbnail: "https://lh3.googleusercontent.com/md/default-user=s96-c",
+          coinsPerAction: 5,
+          active: true,
+          totalActions: 50,
+          completedActions: 22
+        },
+        {
+          id: "demo-p3",
+          userId: "some-other-user3",
+          title: "PewDiePie Meme Review #23",
+          type: "comment",
+          targetId: "60_WIP2f8hA",
+          channelId: "UCq-Fj5jknLsUf-MWSy4_brA",
+          thumbnail: "https://lh3.googleusercontent.com/md/default-user=s96-c",
+          coinsPerAction: 15,
+          active: true,
+          totalActions: 150,
+          completedActions: 98
+        }
+      ]);
+      return;
+    }
 
     const q = query(
       collection(db, "promotions"),
@@ -964,11 +1053,12 @@ function MainApp() {
       const p = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Promotion));
       setAvailablePromos(p);
     }, (error) => {
+      if (isDemoMode) return;
       handleFirestoreError(error, OperationType.LIST, "promotions");
     });
 
     return unsubscribe;
-  }, [profile?.uid]);
+  }, [profile?.uid, isDemoMode]);
 
   // Automation logic loop
   useEffect(() => {
@@ -1776,7 +1866,11 @@ function MainApp() {
     setConnectedAccounts([]);
     localStorage.removeItem('connected_accounts');
     
-    await signOut(auth);
+    if (isDemoMode) {
+      setIsDemoMode(false);
+    } else {
+      await signOut(auth);
+    }
     toast.success("Logged out successfully");
   };
 
@@ -2062,6 +2156,7 @@ function MainApp() {
         <Toaster position="top-center" richColors />
         <Login 
           onLogin={handleLogin} 
+          onDemoLogin={() => setIsDemoMode(true)}
           isLoading={isLoggingIn} 
           acceptedTerms1={acceptedTerms1} 
           setAcceptedTerms1={setAcceptedTerms1} 
@@ -3683,9 +3778,9 @@ function AdminTab() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">Homepage / Vercel Redirect URL</label>
+                  <label className="text-[9.5px] font-black text-slate-400 uppercase ml-1">Homepage URL (Vercel, Netlify, or Firebase)</label>
                   <Input 
-                    placeholder="e.g. https://your-app.vercel.app" 
+                    placeholder="e.g. https://your-app.vercel.app or netlify.app" 
                     value={proj2CustomDomain} 
                     onChange={(e) => setProj2CustomDomain(e.target.value)}
                     className="h-10 font-bold text-[11px]"
@@ -3776,9 +3871,9 @@ function AdminTab() {
                   </div>
                 </div>
 
-                <div className="space-y-1">
+                <div className="space-y-2 border-t pt-2 mt-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[9px] text-slate-500 font-black uppercase">Support &amp; Developer Email</span>
+                    <span className="text-[9px] text-slate-500 font-black uppercase">Primary Developer Email</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -3792,6 +3887,39 @@ function AdminTab() {
                   </div>
                   <div className="bg-slate-50 p-1.5 rounded text-[10px] font-semibold text-slate-700 select-all">
                     durganirahul793@gmail.com
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-500 font-black uppercase">Custom Domain contact (followerhelper.com)</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText("support@followerhelper.com");
+                        toast.success("Branded email copied!");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Copy Brand Email
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 p-1.5 rounded text-[10px] font-bold text-indigo-600 select-all">
+                    support@followerhelper.com
+                  </div>
+
+                  {/* GCP Dropdown limit explanation */}
+                  <div className="bg-amber-50 border border-amber-100 p-2.5 rounded-lg text-[9px] text-[#795548] leading-relaxed">
+                    <p className="font-extrabold uppercase text-[#5d4037] mb-0.5">💡 HOW TO ADD CHOSEN EMAIL TO THE GOOGLE CLOUD DROPDOWN:</p>
+                    <p className="font-medium">
+                      Google Cloud Console has a strict security rule: you can only select an email address in the <b>"User support email"</b> dropdown if you are currently logged in with that exact Google Account or belong to its Google Group.
+                    </p>
+                    <ul className="list-disc pl-3 mt-1 space-y-1 font-semibold">
+                      <li>
+                        <b>Option A (Easiest - Developer Contact Information):</b> You can freely type <code className="font-mono bg-white px-1 border select-all">support@followerhelper.com</code> inside the <b>"Developer contact information"</b> text box at the bottom of the page (which allows manual input!).
+                      </li>
+                      <li>
+                        <b>Option B (Project Access to support@followerhelper.com):</b> Go to GCP <b>"IAM & Admin"</b> &rarr; <b>"IAM"</b>, click <b>"Grant Access"</b>, and add <code className="font-mono bg-white px-1 border select-all">support@followerhelper.com</code> as a Project <b>Editor / Owner</b>. Accept the invite email in that account, then login to GCP using that custom email. The dropdown will now list it perfectly!
+                      </li>
+                    </ul>
                   </div>
                 </div>
               </div>
@@ -3936,7 +4064,7 @@ function AdminTab() {
         </div>
       </div>
 
-      <PublishingGuide open={isGuideOpen} onOpenChange={setIsGuideOpen} />
+      <PublishingGuide open={isGuideOpen} onOpenChange={setIsGuideOpen} customDomainUrl={activeProject === "project2" ? proj2CustomDomain : customDomain} />
       
       {/* Gift Code Creation */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
@@ -5380,7 +5508,11 @@ async function handleSupportAI(message: string) {
   }
 }
 
-function PublishingGuide({ open, onOpenChange }: { open: boolean, onOpenChange: (open: boolean) => void }) {
+function PublishingGuide({ open, onOpenChange, customDomainUrl }: { open: boolean, onOpenChange: (open: boolean) => void, customDomainUrl?: string }) {
+  const [guideHostTab, setGuideHostTab] = useState<"vercel" | "netlify" | "firebase">("vercel");
+  const displayUrl = customDomainUrl?.trim() || "https://tube-follower.vercel.app";
+  const displayDomain = displayUrl.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md bg-white rounded-3xl p-6 sm:p-8 max-h-[85vh] overflow-y-auto border-none shadow-2xl relative">
@@ -5469,162 +5601,374 @@ function PublishingGuide({ open, onOpenChange }: { open: boolean, onOpenChange: 
               1. GCP Second Verification (OAuth Scopes)
             </h4>
             <p className="text-[11px] leading-relaxed text-slate-700">
-              When using sensitive YouTube scopes like <code className="bg-white/80 px-1 rounded text-red-600 font-mono text-[10px]">youtube.readonly</code>, Google triggers a **Second Verification Review** to remove the "unverified app" screen. Follow this checklist:
+              When using sensitive YouTube scopes like <code className="bg-white/80 px-1 rounded text-red-600 font-mono text-[10px]">youtube.readonly</code>, Google triggers a **Second Verification Review** to remove the "unverified app" screen. Select your hosting website below to view tailored steps:
             </p>
-            <ol className="list-decimal ml-4 space-y-1.5 text-[10.5px] text-slate-700">
-              <li>
-                <b>Domain Verification:</b> Go to Google Search Console and verify ownership of your Vercel or custom domain hosting the app (<code className="font-bold text-slate-800">https://tube-follower.vercel.app</code>) under the exact same Gmail/Google account.
-              </li>
-              <li>
-                <b>Privacy Policy Link:</b> Add a valid privacy policy link to your OAuth Consent Screen settings and make sure it is linked inside your web app.
-              </li>
-              <li>
-                <b>Branding Match:</b> Your Google project's app name must exactly match your domain name or website title to prevent trademark declines.
-              </li>
-              <li>
-                <b>Scope justification:</b> State clearly in Google's questionnaire that the app reads subscription lists solely to cross-verify and credit peer-to-peer user subscriptions in our reciprocal coin system.
-              </li>
-            </ol>
 
-            {/* EXPANDED DOMAIN OWNERSHIP TROUBLESHOOTING STEP BY STEP FOR EXPLICIT IMAGE ERROR */}
-            <div className="bg-white/95 p-5 rounded-2xl border-2 border-amber-300 space-y-4 mt-3 shadow-md text-left">
-              <p className="text-[12px] font-black text-red-650 uppercase flex items-center gap-1.5 border-b-2 border-rose-150 pb-2 animate-pulse">
-                🚨 STUCK WITH THE WEBSITE HOMEPAGE NOT REGISTERED TO YOU ERROR? LET'S FIX IT NOW!
-              </p>
+            {/* Platform Selection Tabs */}
+            <div className="flex bg-slate-100/90 p-1 rounded-xl border border-slate-200 gap-1">
+              <button 
+                type="button"
+                onClick={() => setGuideHostTab("vercel")}
+                className={`flex-1 py-1.5 rounded-lg text-[9px] font-black tracking-wide transition-all cursor-pointer ${
+                  guideHostTab === "vercel" 
+                    ? "bg-slate-900 text-white shadow"
+                    : "text-slate-500 hover:text-slate-850"
+                }`}
+              >
+                🔺 VERCEL
+              </button>
+              <button 
+                type="button"
+                onClick={() => setGuideHostTab("netlify")}
+                className={`flex-1 py-1.5 rounded-lg text-[9px] font-black tracking-wide transition-all cursor-pointer ${
+                  guideHostTab === "netlify" 
+                    ? "bg-[#00AD9F] text-white shadow"
+                    : "text-slate-500 hover:text-slate-850"
+                }`}
+              >
+                🌐 NETLIFY
+              </button>
+              <button 
+                type="button"
+                onClick={() => setGuideHostTab("firebase")}
+                className={`flex-1 py-1.5 rounded-lg text-[9px] font-black tracking-wide transition-all cursor-pointer ${
+                  guideHostTab === "firebase" 
+                    ? "bg-amber-500 text-white shadow animate-pulse"
+                    : "text-slate-500 hover:text-slate-850"
+                }`}
+              >
+                🔥 FIREBASE
+              </button>
+            </div>
 
-              {/* QUICK INSTANT WORKAROUND */}
-              <div className="p-4 bg-green-50/95 rounded-xl border border-green-200 space-y-3">
-                <span className="font-extrabold text-green-900 block text-[11px] uppercase tracking-wide">
-                  ⚡ SOLUTION FOR: "YOU CANNOT REMOVE THAT LOGO" & VERIFICATION LOCKS
-                </span>
-                <p className="text-[10px] text-slate-705 leading-relaxed font-semibold">
-                  You are 100% correct! The Google Cloud Console has a notorious UI limitation: <b>once you upload an App Logo, GCP does not show any "Delete" or "Remove" button</b> to clear it. Because a logo is stuck on your consent screen, Google forces you to undergo strict **manual brand verification**, which checks ownership of the domain and blocks you with the <i>"The website of your homepage URL is not registered to you"</i> error!
-                </p>
-                <div className="bg-white p-3 rounded-lg border border-green-200 space-y-2.5 text-left">
-                  <p className="text-[10px] text-green-950 font-extrabold uppercase animate-pulse">How to instantly break free from this lock (Choose One):</p>
-                  
-                  <div className="space-y-2">
-                    <p className="text-[9.5px] text-slate-800 leading-relaxed font-bold">
-                      <span className="text-emerald-750">Option 1: Create a New GCP Project (Recommended & Takes 30 Seconds)</span>
-                      <br />
-                      Since GCP only allows one OAuth brand per project, the easiest workaround is to simply create a fresh Google Cloud project:
-                    </p>
-                    <ol className="list-decimal pl-4 text-[9px] text-slate-600 space-y-1 font-semibold">
-                      <li>Go to your Google Cloud Console top navigation bar, click the project dropdown, and click <b className="text-slate-800">"New Project"</b>.</li>
-                      <li>Configure your fresh project's OAuth Consent Screen. <b className="text-red-650">This time, leave the "App Logo" slot completely blank!</b></li>
-                      <li>Fill out your Homepage/Privacy links to Vercel, then click "Create Credentials" &rarr; "OAuth client ID". <b className="text-red-650">CRITICAL: Select "Web application" as your Application type!</b> (Do NOT select "Android" or "iOS" here, because our app operates on the web browser. Choosing Android will prompt you for a SHA-1 fingerprint and fail to work for our login flow).</li>
-                      <li>Generate your new Client ID / Client Secret, and update your app settings. Because no custom logo is uploaded, <b className="text-emerald-700">GCP will bypass the manual brand review & website registration requirement completely</b>, and login will work instantly!</li>
-                    </ol>
-                  </div>
+            {/* TAB CONTENTS - VERCEL */}
+            {guideHostTab === "vercel" && (
+              <div className="space-y-3 text-left">
+                <div className="p-3.5 bg-white/90 rounded-xl border border-slate-200 space-y-2">
+                  <p className="font-black text-slate-900 text-[11px] uppercase tracking-wider text-blue-600">🔺 VERCEL DEPLOYMENT &amp; VERIFICATION</p>
+                  <p className="text-[10.5px] font-medium text-slate-600 leading-normal">
+                    Vercel provides automatic serverless builds. Perfect for deploying quickly by pushing to GitHub.
+                  </p>
+                  <ol className="list-decimal pl-4 text-[10px] text-slate-600 space-y-1 font-semibold">
+                    <li>Create a free account at <b>vercel.com</b> and connect your GitHub profile.</li>
+                    <li>Click <b>"Add New" &rarr; "Project"</b> and import your app repository.</li>
+                    <li>Vercel automatically detects Vite. Keep default build settings!</li>
+                    <li>Under Environment Variables, if you have keys (like <code className="font-mono text-[9px] text-[#E91E63]">GEMINI_API_KEY</code>), add them.</li>
+                    <li>Click <b>Deploy</b>. Vercel will build and give you a live URL: <code className="font-bold text-slate-800">{displayUrl}</code>.</li>
+                  </ol>
+                </div>
 
-                  <hr className="border-slate-150" />
-
-                  <div className="space-y-2">
-                    <p className="text-[9.5px] text-slate-800 leading-relaxed font-bold">
-                      <span className="text-amber-700">Option 2: Switch the Consent Screen back to "Testing" Status</span>
-                      <br />
-                      If you want to keep using your current GCP project with the uploaded logo:
-                    </p>
-                    <ol className="list-decimal pl-4 text-[9px] text-slate-600 space-y-1 font-semibold">
-                      <li>In Google Cloud Console under <b>APIs & Services</b> &rarr; <b>OAuth Consent Screen</b>.</li>
-                      <li>Click the button that says <b className="text-slate-800">"Back to testing"</b> (under the publishing status section).</li>
-                      <li>When an app is in "Testing" mode, Google completely suspends the domain ownership requirement and bypasses logo brand review!</li>
-                      <li>Under the <b>"Test users"</b> list, click Add Users and add any emails (like your email <b className="text-slate-800">durganirahul793@gmail.com</b>) you want to log in with. You can test and run the app for up to 100 users with zero verification forms!</li>
-                    </ol>
-                  </div>
-
-                  <hr className="border-slate-150" />
-
-                  <div className="space-y-1.5 text-[9px] text-slate-705 leading-relaxed">
-                    <p className="font-extrabold text-red-700">⚠️ Why Vercel.app domains fail verification in Production:</p>
-                    <p>
-                      Because <code className="bg-red-50 text-red-650 px-1 py-0.2 rounded font-mono">vercel.app</code> is a globally shared public suffix (like <i>github.io</i> or <i>herokuapp.com</i>), Google Cloud does not permit individual developers to verify the top-level suffix. Therefore, automated verification for standard subdomains on the public suffix list is usually blocked for production use. If you want full Production mode with a custom logo, you must use a custom domain you purchased (e.g., <code className="font-mono text-blue-600">tube-follower.com</code>).
-                    </p>
-                  </div>
+                {/* DOMAIN VERIFICATION DETAILS */}
+                <div className="p-3.5 bg-blue-50/50 rounded-xl border border-blue-200 space-y-2 text-[10.5px]">
+                  <p className="font-black text-slate-800 uppercase text-[10px]">Verify Vercel URL in Google Console:</p>
+                  <ul className="list-disc pl-4 text-[10px] text-slate-700 space-y-1 font-bold">
+                    <li><b>Authorized Redirect URI:</b> In Google credentials, use <code className="bg-white px-1 select-all">{displayUrl}</code>.</li>
+                    <li><b>Privacy policy:</b> <code className="bg-white px-1">{displayUrl}/privacy</code></li>
+                    <li><b>Terms of service:</b> <code className="bg-white px-1">{displayUrl}/terms</code></li>
+                    <li><b>Authorized Domain limit:</b> Use <code className="text-blue-600 select-all">{displayDomain}</code> under Consent Screen domains.</li>
+                  </ul>
+                  <p className="text-[9px] text-red-650 font-medium">⚠️ Google Note: Subdomains of vercel.app are sometimes locked from production verification because it is a public suffix. For a final production launch with a custom logo, we suggest linking a custom domain (e.g., tube-follower.com) to Vercel!</p>
                 </div>
               </div>
+            )}
 
-              {/* PERMANENT FIX */}
-              <div className="p-3 bg-amber-50/90 rounded-xl border border-amber-200 space-y-2">
-                <span className="font-extrabold text-[#795548] block text-[11px] uppercase">
-                  ⭐ PERMANENT FIX: PROPERLY LINK AND CLAIM YOUR HOMEPAGE
+            {/* TAB CONTENTS - NETLIFY */}
+            {guideHostTab === "netlify" && (
+              <div className="space-y-3 text-left">
+                {/* BLANK SCREEN WARNING EXPLAINED */}
+                <div className="p-4 bg-red-50/95 rounded-xl border-2 border-red-350 space-y-2">
+                  <p className="font-black text-red-700 text-[11px] uppercase tracking-wide flex items-center gap-1">
+                    🚨 DID YOUR NETLIFY APP OPEN AS A BLANK WHITE PAGE?
+                  </p>
+                  <p className="text-[10px] text-slate-700 leading-relaxed font-semibold">
+                    This is an extremely common mistake! If you compressed your original project folder and dragged it directly into Netlify, the website will load as completely blank.
+                    <br /><b className="text-slate-900 mt-1 block">Why?</b> Netlify is a static asset host. Browsers cannot execute raw TypeScript files (<code className="font-mono text-red-650">/src/main.tsx</code>) directly!
+                  </p>
+                  <p className="text-[10.5px] text-slate-850 font-extrabold bg-white p-2.5 rounded-lg border border-red-250 leading-normal">
+                    💡 <b>THE 2-SECOND FIX:</b>
+                    <br />
+                    1. In your terminal, run: <code className="bg-slate-100 px-1 font-mono text-blue-600">npm run build</code>. This compiles the TypeScript code into pristine, ultra-fast browser HTML and JS.
+                    <br />
+                    2. This creates a directory named <b>`dist`</b>.
+                    <br />
+                    3. <b>ONLY drag and drop the files INSIDE the `dist` folder into Netlify!</b> Never upload the root folders.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-white/90 rounded-xl border border-slate-200 space-y-2">
+                  <p className="font-black text-slate-900 text-[11px] uppercase tracking-wider text-[#00AD9F]">🌐 NETLIFY DEPLOYMENT STEPS</p>
+                  <ol className="list-decimal pl-4 text-[10px] text-slate-600 space-y-1 font-semibold font-bold">
+                    <li>Run <code className="font-mono text-[9px] bg-slate-100 p-0.5 rounded">npm run build</code> on your computer.</li>
+                    <li>Log in to <b>netlify.com</b>. Go to <b>Sites</b> and scroll to the bottom.</li>
+                    <li>Locate the <b>"Deploys"</b> section or <b>"Deploy manually"</b> slot.</li>
+                    <li>Drag and drop the compiled <b>`dist`</b> folder.</li>
+                    <li>Go to Site Settings and change your site name. Your App lives at <code className="font-bold text-[#00AD9F]">{displayUrl}</code>!</li>
+                  </ol>
+                  <p className="text-[9.5px] text-slate-500 leading-normal">
+                    <b>Routing 404 Fix:</b> React is a Single Page Application (SPA). If you refresh on <code className="font-mono">/privacy</code>, Netlify will show a 404 without redirect rules. We have automatically created a <code className="font-mono bg-slate-50 text-[#00AD9F] font-bold">_redirects</code> file for you! When you build, this file is copied into `dist` and Netlify will use it to handle route rewrites automatically.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENTS - FIREBASE HOSTING */}
+            {guideHostTab === "firebase" && (
+              <div className="space-y-3 text-left animate-fade-in">
+                <div className="p-4 bg-amber-50 rounded-xl border-2 border-amber-300 space-y-2 text-[10.5px]">
+                  <p className="font-black text-amber-900 text-[11px] uppercase tracking-wide flex items-center gap-1.5 animate-pulse">
+                     🔥 THE ULTIMATE FREE CHOICE (RECOMMENDED SUGGESTED HOST)
+                  </p>
+                  <p className="text-slate-705 leading-relaxed font-semibold">
+                    Since you already set up a full Firebase project with Firestore and Authentication, **Firebase Hosting is 100% free and requires zero Search Console verification logins!**
+                    <br /><b className="text-[#E91E63]">Why is this best?</b> Because Google Cloud owns Firebase! Your Firebase Hosting subdomain (<code className="font-bold text-slate-800">https://yourproject.firebaseapp.com</code>) is automatically registered to you. Google instantly trusts it—meaning NO website ownership approvals are needed!
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-white/90 rounded-xl border border-slate-200 space-y-2">
+                  <p className="font-black text-slate-950 text-[11px] uppercase tracking-wider text-amber-500">🔥 HOW TO DEPLOY IN 2 MINUTES</p>
+                  <ol className="list-decimal pl-4 text-[10px] text-slate-600 space-y-1 font-semibold">
+                    <li>In your computer's terminal, install the Firebase command line tool:
+                      <code className="block bg-slate-900 text-white font-mono text-[9px] p-1.5 rounded mt-1 select-all">npm install -g firebase-tools</code>
+                    </li>
+                    <li>Log in to Firebase:
+                      <code className="block bg-slate-900 text-white font-mono text-[9px] p-1.5 rounded mt-1">firebase login</code>
+                    </li>
+                    <li>Initialize Hosting:
+                      <code className="block bg-slate-900 text-white font-mono text-[9px] p-1.5 rounded mt-1">firebase init hosting</code>
+                      <ul className="list-disc pl-4 text-[9px] text-slate-500 mt-1 font-normal">
+                        <li>Choose <b>"Use an existing project"</b> and select your current project directory ID.</li>
+                        <li>For your public directory, type: <code className="font-mono bg-slate-100 font-bold">dist</code></li>
+                        <li>Configure as single-page app (rewrite all URLs)? Type: <code className="font-bold text-green-700">y</code> (Yes)</li>
+                      </ul>
+                    </li>
+                    <li>Build and Publish:
+                      <code className="block bg-slate-900 text-white font-mono text-[9px] p-1.5 rounded mt-1">npm run build && firebase deploy --only hosting</code>
+                    </li>
+                  </ol>
+                  <p className="text-[9.5px] text-slate-500 leading-normal">
+                    Firebase will give you a dynamic secure link like <code className="font-mono bg-slate-50 text-amber-600">https://your-project.web.app</code> or <code className="font-mono bg-slate-50 text-amber-600">https://your-project.firebaseapp.com</code> which works flawlessly with Google Login and will never suffer from blank screen reloads!
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* EXPANDED DOMAIN OWNERSHIP TROUBLESHOOTING STEP BY STEP FOR EXPLICIT IMAGE ERROR */}
+            <div className="bg-white/95 p-6 rounded-2xl border-2 border-rose-300 space-y-4 mt-4 text-left shadow-lg">
+              <p className="text-[13px] font-black text-rose-800 uppercase flex items-center gap-1.5 border-b border-rose-150 pb-2 animate-pulse">
+                🛡️ HOW TO BYPASS OR RESOLVE THE "URL NOT FOUND" / "DOMAIN UNREGISTERED" HEADACHE
+              </p>
+
+              {/* DIRECT GOLDEN BYPASS (RECOMMENDED FIRST FOR INSTANT FIX) */}
+              <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-300 text-left">
+                <span className="font-extrabold text-emerald-950 block text-[11px] uppercase tracking-wide flex items-center gap-1">
+                  ⚡ SOLUTION 1: THE 10-SECOND BYPASS (NO DOMAIN VERIFICATION REQUIRED!)
                 </span>
-                <p className="text-[10px] text-slate-700 leading-relaxed font-semibold">
-                  If you absolutely want a custom App Logo, you must satisfy Google's domain verification with these exact steps:
+                <p className="text-[10px] text-slate-700 leading-normal font-medium mt-1">
+                  Google Cloud Console only triggers domain verification if you upload an <b>App Logo</b> or publish to <b>Production</b> status. You can completely bypass this requirement by doing the following:
                 </p>
-                <ol className="list-decimal pl-4 text-[9.5px] text-slate-700 space-y-2 font-bold">
+                <ol className="list-decimal pl-4 text-[9.5px] text-slate-800 space-y-1.5 font-bold mt-2">
                   <li>
-                    <span className="text-amber-900">Step 1: Check Search Console Account Login:</span>
-                    <p className="text-[9px] text-slate-650 font-medium">
-                      You must sign open <span className="underline">search.google.com/search-console</span> using the <b>EXACT SAME Google account</b> (e.g. <b>{auth.currentUser?.email || "durganirahul793@gmail.com"}</b>) that owns the Google Cloud Console project! If they are on different Gmails, the link will fail.
-                    </p>
+                    Create a <b>fresh Google Cloud Project</b> (takes 5 seconds — click the project selector at the top-left, then click <b>New Project</b>).
                   </li>
                   <li>
-                    <span className="text-amber-900">Step 2: Add exact URL Prefix:</span>
-                    <p className="text-[9px] text-slate-650 font-medium">
-                      In Search Console, add a property. You MUST use <b>"URL prefix"</b> (the right-hand box) and type exactly: <code className="bg-white text-red-600 px-1 py-0.5 rounded border">https://tube-follower.vercel.app/</code> (with the trailing slash!). Do NOT use domain-level verification unless you own DNS.
-                    </p>
+                    When setting up the <b>OAuth Consent Screen</b> in your new project, <b>LEAVE THE APP LOGO SLOT COMPLETELY EMPTY!</b> Also leave the Homepage, Privacy Policy, and Terms of Service slots completely blank.
                   </li>
                   <li>
-                    <span className="text-amber-900">Step 3: Register in GCP "Domain Verification" Panel:</span>
-                    <p className="text-[9px] text-slate-650 font-medium">
-                      Even after Search Console says "Verified", Google Cloud Console doesn't know until you link it!
-                      Open GCP side-menu &rarr; <b>APIs & Services</b> &rarr; <b>Domain verification</b>. Click the blue <b>"Add domain"</b> button, and paste exactly <code className="bg-white text-blue-600 px-1 py-0.5 rounded border">https://tube-follower.vercel.app/</code>, then click Add. This instantly links the property!
-                    </p>
+                    Keep your project state set to <b>"Testing"</b> (do NOT click Publish to Production). Go to "Test Users" and click Add to add your email <code className="text-slate-900 font-semibold">durganirahul793@gmail.com</code>.
                   </li>
                   <li>
-                    <span className="text-amber-900">Step 4: Request Re-verification:</span>
-                    <p className="text-[9px] text-slate-650 font-medium">
-                      Now go back to the OAuth Consent screen, select <b>"I have fixed the issues"</b>, click <b>Proceed</b>. Google's automated scanner will detect the registered domain match instantly and clear the warning!
-                    </p>
+                    Click <b>Save &amp; Continue</b>. Since there is no logo and you are in Testing mode, the save will complete instantly with <b>zero domain verification required!</b>
+                  </li>
+                  <li>
+                    Now, go to the <b>Credentials</b> tab &rarr; Create your OAuth Client ID, and paste <code className="bg-white px-1 text-blue-600 font-mono text-[9px]">https://tubefollower.netlify.app/</code> in the <b>Authorized Redirect URIs</b> slot. (Redirect URIs do NOT require domain verification, so this works instantly!).
                   </li>
                 </ol>
               </div>
 
-              {/* SECTION: INVALID DOMAIN SCHEME EXPLAINED */}
-              <div className="p-3 bg-red-50/90 rounded-xl border border-red-200 space-y-2">
-                <span className="font-extrabold text-red-900 block text-[11px] uppercase">
-                  ❌ FIX 3: "Invalid domain: must use either http or https as the scheme"
+              {/* FIXING THE 'URL NOT FOUND' ERROR (IF REMAINING IN THE SAME PROJECT) */}
+              <div className="p-4 bg-amber-50 rounded-xl border border-amber-350 text-left space-y-2.5">
+                <span className="font-extrabold text-amber-950 block text-[11px] uppercase tracking-wide">
+                  🛠️ SOLUTION 2: FIX THE "URL NOT FOUND" PATH ERROR IN GCP
                 </span>
-                <p className="text-[10px] text-slate-700 leading-relaxed font-semibold">
-                  This happens under App Information inputs, if you wrote raw domain text without a protocol:
+                <p className="text-[10px] text-slate-700 leading-normal font-medium">
+                  The direct links to "Domain verification" threw a <b>"URL not found"</b> error because Google Cloud requires an <b>active Project ID</b> parameter in the URL, or the <b>Site Verification API</b> is disabled. Here is how to load the page correctly:
                 </p>
-                <div className="space-y-1.5 text-[9.5px] font-bold">
-                  <div className="flex items-center gap-1.5 bg-rose-100 p-1.5 rounded-md text-red-800">
-                    <span className="bg-red-600 text-white font-black px-1.5 py-0.2 rounded text-[8px]">WRONG</span>
-                    <code>tube-follower.vercel.app</code>
-                  </div>
-                  <div className="flex items-center gap-1.5 bg-emerald-100 p-1.5 rounded-md text-green-800">
-                    <span className="bg-emerald-600 text-white font-black px-1.5 py-0.2 rounded text-[8px]">CORRECT</span>
-                    <code>https://tube-follower.vercel.app/</code>
-                  </div>
-                </div>
-                <ul className="list-disc pl-4 text-[9px] text-slate-600 space-y-1 font-semibold mt-1">
-                  <li><b>Application home page:</b> Must be exactly <code className="font-mono text-green-700 bg-white px-1">https://tube-follower.vercel.app/</code></li>
-                  <li><b>Privacy Policy Link:</b> Must be exactly <code className="font-mono text-green-700 bg-white px-1">https://tube-follower.vercel.app/privacy</code></li>
-                  <li><b>Terms of Service Link:</b> Must be exactly <code className="font-mono text-green-700 bg-white px-1">https://tube-follower.vercel.app/terms</code></li>
-                  <li><b>Authorized domains (below on same page):</b> Enter normal domain <code className="font-mono text-blue-600 bg-white px-1">tube-follower.vercel.app</code> <b>without</b> protocol scheme!</li>
-                </ul>
+                
+                <ol className="list-decimal pl-4 text-[9.5px] text-slate-800 space-y-2 font-bold">
+                  <li>
+                    Look at the very top of your <b>Google Cloud Console</b> screen. Click on the project dropdown (next to the main Google Cloud header in the top-left corner) to select your target project.
+                  </li>
+                  <li>
+                    Note the exact <b>Project ID</b> of your project (for example: <code className="bg-white px-1 font-mono text-slate-700 font-black">tubefollower-oauth-1a2b3</code>).
+                  </li>
+                  <li>
+                    Now, copy the address path below, replace <code className="text-rose-700">YOUR_PROJECT_ID</code> with your active Project ID, and load it directly in a new tab:
+                    <div className="bg-slate-900 text-amber-400 p-2 text-[9.5px] leading-tight select-all font-mono rounded border border-slate-800 mt-1 break-all">
+                      https://console.cloud.google.com/apis/domainverification?project=YOUR_PROJECT_ID
+                    </div>
+                  </li>
+                  <li>
+                    <b>If prompted, click the blue "ENABLE" button</b> to enable the Google Site Verification API. This API is 100% free and will instantly make the "Domain verification" menu active and visible!
+                  </li>
+                  <li>
+                    Once loaded, click <b>Add Domain</b> and paste your homepage exactly: <code className="bg-white px-1 font-mono text-emerald-800">https://tubefollower.netlify.app/</code>.
+                  </li>
+                </ol>
               </div>
 
-              {/* RE-VERIFICATION GUIDE */}
-              <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200 space-y-1.5">
-                <span className="font-extrabold text-blue-800 block text-[11px] uppercase">
-                  🔍 Reference Search Console HTML Meta Tag
+              {/* QUICK INSTANT WORKAROUND */}
+              <div className="p-3 bg-green-50/95 rounded-xl border border-green-200 text-left">
+                <span className="font-extrabold text-green-900 block text-[10px] uppercase tracking-wide">
+                  💡 EASY ALTERNATIVE: BUNDLED BRAND LOGO WORKAROUND
                 </span>
-                <div className="text-[9.5px] text-slate-600 font-medium">
-                  If Search Console ever asks you to re-verify using a site-wide meta tag, our live website is automatically pre-configured with the exact required verification token:
-                  <code className="block font-mono text-[9px] text-[#E91E63] font-bold bg-white p-1.5 rounded border border-slate-200 mt-1 select-all">
-                    iVP4vO_ce7WMH7hInfPatJ_nJotZFwRSZA18dGMASVU
-                  </code>
+                <p className="text-[9.5px] text-slate-700 leading-normal font-semibold mt-1">
+                  Google Cloud Console has a frustrating limitation: <b>once you upload an App Logo, GCP disables removing it</b>, which triggers manual domain ownership checks. If you'd rather not verify domains, use one of these instant bypasses:
+                </p>
+                <div className="mt-2 text-left space-y-1.5">
+                  <ul className="list-disc pl-4 text-[9.5px] text-slate-650 space-y-1">
+                    <li><b>Option 1: Create a fresh GCP project.</b> Set up OAuth and <b>leave the logo slot completely empty!</b> Because there is no logo, GCP bypasses domain registration checks entirely and publishes instantly!</li>
+                    <li><b>Option 2: Back to testing.</b> Turn publishing status back to "Testing". Go to "Test users", click Add, and enter your email address (<code className="font-semibold text-slate-800">durganirahul793@gmail.com</code>). This completely removes verification limits for up to 100 users!</li>
+                  </ul>
                 </div>
+              </div>
+
+              {/* PERMANENT FIX - REMAPPED TO POWERFUL COMPREHENSIVE OWNER VERIFICATION STEP-BY-STEP */}
+              <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-5 rounded-xl border border-slate-200 shadow-sm text-left space-y-4">
+                <span className="font-extrabold text-slate-900 block text-[11px] uppercase tracking-wide border-b border-slate-200 pb-2 flex items-center gap-1.5">
+                  🔑 STEP-BY-STEP WORKFLOW: DOMAIN OWNER VERIFICATION
+                </span>
+                
+                <p className="text-[10px] text-slate-600 leading-relaxed font-semibold">
+                  Google Cloud Console requires you to verify that you are the absolute owner of the Netlify domain before it lets you use it in your OAuth Consent settings. Here is the exact, fail-proof process to complete ownership verification in Google Search Console:
+                </p>
+
+                <div className="space-y-4">
+                  {/* STEP 1 */}
+                  <div className="bg-white p-3 rounded-lg border border-slate-150 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-blue-600 text-white font-extrabold p-1 rounded-full text-[9px] w-4 h-4 flex items-center justify-center">1</span>
+                      <span className="font-extrabold text-slate-900 text-[10px]">Open Google Search Console</span>
+                    </div>
+                    <p className="text-[9.5px] text-slate-600 pl-5 leading-normal">
+                      Go to <a href="https://search.google.com/search-console" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-semibold">search.google.com/search-console</a> and log in using the <b>exact same Google Account</b> that you are using for your Google Cloud Console project.
+                    </p>
+                  </div>
+
+                  {/* STEP 2 */}
+                  <div className="bg-white p-3 rounded-lg border border-slate-150 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-blue-600 text-white font-extrabold p-1 rounded-full text-[9px] w-4 h-4 flex items-center justify-center">2</span>
+                      <span className="font-extrabold text-slate-900 text-[10px]">Add Netlify as a 'URL Prefix' Property</span>
+                    </div>
+                    <p className="text-[9.5px] text-slate-600 pl-5 leading-normal">
+                      In the top-left corner dropdown menu (where it lists your properties), click <b>"+ Add property"</b>. 
+                    </p>
+                    <p className="text-[9.5px] text-slate-700 pl-5 font-semibold">
+                      Choose the right-side box labeled <b className="text-blue-700">"URL prefix"</b>. Paste your Netlify URL exactly:
+                    </p>
+                    <div className="bg-slate-50 border border-slate-200 rounded p-1.5 pl-5 ml-5 font-mono text-[9px] text-[#E91E63] font-bold select-all">
+                      https://tubefollower.netlify.app/
+                    </div>
+                    <p className="text-[9px] text-slate-500 pl-5 italic mt-1">
+                      Note: You must include the trailing "/" slash at the end of the URL! Then click <b>Continue</b>.
+                    </p>
+                  </div>
+
+                  {/* STEP 3 */}
+                  <div className="bg-white p-3 rounded-lg border border-slate-150 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-blue-600 text-white font-extrabold p-1 rounded-full text-[9px] w-4 h-4 flex items-center justify-center">3</span>
+                      <span className="font-extrabold text-slate-900 text-[10px]">Get your HTML Tag Verification Code</span>
+                    </div>
+                    <p className="text-[9.5px] text-slate-600 pl-5 leading-normal">
+                      Google Search Console will show you a popup list of verification options. Scroll down to the <b className="text-amber-800">"Other verification methods"</b> subsection and click on <b className="text-emerald-800">"HTML tag"</b> to expand it.
+                    </p>
+                    <p className="text-[9.5px] text-slate-605 pl-5 font-semibold">
+                      You will see a meta tag line like this:
+                    </p>
+                    <div className="bg-slate-900 text-slate-200 p-2 rounded ml-5 font-mono text-[8.5px] break-all select-all">
+                      &lt;meta name="google-site-verification" content="<span className="text-amber-300 font-black">YOUR_VERIFICATION_TOKEN</span>" /&gt;
+                    </div>
+                    <p className="text-[9.5px] text-slate-600 pl-5 mt-1">
+                      Copy only the letters inside the <code className="bg-amber-50 px-1 border rounded text-amber-900 font-bold font-mono">content="..."</code> quotes.
+                    </p>
+                  </div>
+
+                  {/* STEP 4 */}
+                  <div className="bg-white p-3 rounded-lg border border-slate-150 space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-blue-600 text-white font-extrabold p-1 rounded-full text-[9px] w-4 h-4 flex items-center justify-center">4</span>
+                      <span className="font-extrabold text-slate-900 text-[10px]">Embed the tag in index.html &amp; Redeploy</span>
+                    </div>
+                    <p className="text-[9.5px] text-slate-600 pl-5 leading-normal">
+                      To embed this tag into your built files, add it inside the <code className="font-mono text-[9px] bg-slate-105 font-bold">&lt;head&gt;</code> tags of your index.html file:
+                    </p>
+                    
+                    <div className="bg-slate-50 p-2.5 rounded border border-slate-200 space-y-1 pl-5 ml-5">
+                      <p className="text-[9px] text-slate-700 font-bold">🛠️ Current Active Site-Verification values baked in this app:</p>
+                      <ul className="list-disc pl-4 text-[9px] text-slate-650 font-bold space-y-1">
+                        <li>
+                          Token 1: <code className="bg-white font-mono text-emerald-700 px-1 border rounded">iVP4vO_ce7WMH7hInfPatJ_nJotZFwRSZA18dGMASVU</code> 
+                        </li>
+                        <li>
+                          Token 2: <code className="bg-white font-mono text-emerald-700 px-1 border rounded">noR0DxmqwmIki6HIevvhPahZVIqmDx0DUlRH5t2ZHOs</code>
+                        </li>
+                        <li className="text-blue-700">
+                          Token 3 (Your Custom Token): <code className="bg-blue-50 font-mono text-blue-700 px-1 border border-blue-200 rounded font-black">U49gM8HmBfcbtBfzeMP0oImjfKmHpeiG_K6ZgKvQZnM</code>
+                        </li>
+                      </ul>
+                      <p className="text-[8.5px] text-emerald-800 font-bold mt-1">
+                        💡 Note: Google Search Console supports multiple active owners simultaneously! If your Google account generated either of the keys above, it is already live and ready to verify immediately! If you generated a different third token, you can easily paste it inside index.html and push to Netlify!
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* STEP 5 */}
+                  <div className="bg-white p-3 rounded-lg border border-slate-150 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-blue-600 text-white font-extrabold p-1 rounded-full text-[9px] w-4 h-4 flex items-center justify-center">5</span>
+                      <span className="font-extrabold text-slate-950 text-[10px]">Click 'Verify' inside Search Console</span>
+                    </div>
+                    <p className="text-[9.5px] text-slate-600 pl-5 leading-normal">
+                      Once Netlify is updated with the HTML meta tag, go back to Google Search Console and click the green <b>Verify</b> button. Google will check your live site, find the meta tag, and show an instant green <b>"Ownership verified"</b> checkmark!
+                    </p>
+                  </div>
+
+                  {/* STEP 6 */}
+                  <div className="bg-white p-3 rounded-lg border border-slate-150 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-emerald-600 text-white font-extrabold p-1 rounded-full text-[9px] w-4 h-4 flex items-center justify-center">6</span>
+                      <span className="font-extrabold text-emerald-950 text-[10px]">Add Domain to Google Cloud Console</span>
+                    </div>
+                    <p className="text-[9.5px] text-slate-600 pl-5 leading-normal">
+                      Now that Search Console knows you own the domain, go to Google Cloud Console &rarr; API & Services &rarr; <b>Domain verification</b> (or use Solution 2's direct project link above). 
+                    </p>
+                    <p className="text-[9.5px] text-slate-700 pl-5 font-bold leading-normal">
+                      Click the <b className="text-emerald-800">"Add domain"</b> button, paste <code className="bg-slate-100 px-1 text-slate-800 font-mono">https://tubefollower.netlify.app/</code>, and click Add. Google Cloud Console will verify ownership instantly with zero errors!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION: INVALID DOMAIN SCHEME EXPLAINED */}
+              <div className="p-3 bg-red-50/90 rounded-xl border border-red-200 space-y-1">
+                <span className="font-extrabold text-red-900 block text-[10.5px] uppercase">
+                  ❌ SCHEME SCHEDULING WRONG IN GCP?
+                </span>
+                <p className="text-[9.5px] text-slate-605 font-semibold">Use these exact inputs in GCP Consent:</p>
+                <ul className="list-disc pl-4 text-[9px] text-slate-650 space-y-1 font-semibold">
+                  <li><b>Homepage:</b> <code className="font-mono text-green-700 bg-white px-1 select-all">{displayUrl}/</code></li>
+                  <li><b>Privacy Policy:</b> <code className="font-mono text-green-700 bg-white px-1 select-all">{displayUrl}/privacy</code></li>
+                  <li><b>Terms of Service:</b> <code className="font-mono text-green-700 bg-white px-1 select-all">{displayUrl}/terms</code></li>
+                  <li><b>Authorized Developer Domain:</b> <code className="font-mono text-blue-600 bg-white px-1 select-all">{displayDomain}</code> (No protocol HTTPS!)</li>
+                </ul>
               </div>
             </div>
 
             <div className="bg-white/85 p-2 rounded-xl border border-amber-200/50 mt-1">
               <p className="text-[10px] font-black text-amber-800">⚠️ Video Requirement:</p>
               <p className="text-[10px] text-slate-600 font-medium leading-normal mt-0.5">
-                Record a Youtube video showing: Login screen → Consent popup → client_id visible in URL → granting scopes → redirected back safely. Keep it unlisted!
+                Record a Youtube video showing: Login screen &rarr; Consent popup &rarr; client_id visible in URL &rarr; granting scopes &rarr; redirected back safely. Keep it unlisted!
               </p>
             </div>
           </section>
