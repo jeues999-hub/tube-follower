@@ -22,17 +22,6 @@ async function startServer() {
   });
 
   // API routes FIRST
-  app.get("/googlefa1f0242ec11d8e1.html", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "googlefa1f0242ec11d8e1.html"));
-  });
-
-  // Dynamic Google Site Verification wildcard to make any verification file check succeed instantly
-  app.get("/google*.html", (req, res) => {
-    const filename = path.basename(req.path);
-    res.setHeader("Content-Type", "text/html");
-    res.send(`google-site-verification: ${filename}`);
-  });
-
   // Fast, real-time YouTube metadata scraper endpoint
   app.get("/api/youtube-metadata", async (req, res) => {
     const urlParam = req.query.url as string;
