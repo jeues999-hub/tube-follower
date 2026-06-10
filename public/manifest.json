@@ -1,15 +1,15 @@
 {
   "short_name": "TUBE FOLLOWER",
-  "name": "TUBE FOLLOWER: "Grow your YouTube channel",
+  "name": "TUBE FOLLOWER",
   "icons": [
    
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3670/3670147.png",
+      "src": "/1779458889833.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3670/3670147.png",
+      "src": "/1779458889833.png",
       "type": "image/png",
       "sizes": "512x512"
     }
