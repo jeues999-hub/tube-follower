@@ -24,10 +24,13 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.5'
+      - name: Fix Gradle Wrapper
+        run: |
+          cd android
+          wget https://services.gradle.org/distributions/gradle-8.5-bin.zip
+          unzip -o gradle-8.5-bin.zip
+          ./gradle-8.5/bin/gradle wrapper --gradle-version 8.5
+          ls gradle/wrapper/
 
       - name: Build APK
         run: |
