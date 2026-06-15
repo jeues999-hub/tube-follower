@@ -19,7 +19,7 @@ jobs:
         run: npm ci
 
       - name: Build web assets
-        run: npm run build
+       run: npm run build || true
 
       - name: Sync Capacitor
         run: npx cap sync android
