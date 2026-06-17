@@ -1,8 +1,12 @@
-
 {
-  "short_name": "TUBE FOLLOWER",
-  "name": "TUBE FOLLOWER",
+  "short_name": "NivaBoost",
+  "name": "NivaBoost: YouTube Growth AI",
   "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3670/3670147.png",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
     {
       "src": "https://cdn-icons-png.flaticon.com/512/3670/3670147.png",
       "type": "image/png",
@@ -14,7 +18,7 @@
       "sizes": "512x512"
     }
   ],
-  "start_url": "/",
+  "start_url": ".",
   "display": "standalone",
   "theme_color": "#2196F3",
   "background_color": "#ffffff"

@@ -1,0 +1,8 @@
+{
+  "appId": "com.forceupdate.app",
+  "appName": "Force Update App",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

@@ -1,6 +1,6 @@
 {
-  "name": "TUBE FOLLOWER",
-  "description": "A YouTube growth platform with automated coin earning and channel promotion features.",
+  "name": "Android App with Force Update",
+  "description": "A React Web and Android app release notifications tracker governed by a real-time Admin Panel.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
